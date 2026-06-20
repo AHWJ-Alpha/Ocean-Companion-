@@ -18,6 +18,7 @@ import android.view.animation.DecelerateInterpolator
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.Button as AndroidButton
 import android.widget.EditText
@@ -62,6 +63,7 @@ class FloatingService : Service() {
     private var lastSeenPackage = ""
     private var lastImmediateSpeakAt = 0L
     private var lastRoutineSpeakAt = 0L
+    private var panelAnimating = false
     private var currentUserName = "\u4f60"
     private var currentCompanionName = "Ocean"
     private var currentCompanionTheme = CompanionTheme.default()
@@ -122,10 +124,6 @@ class FloatingService : Service() {
             addView(imageView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
             addView(labelView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
             clipToOutline = true
-            setOnLongClickListener {
-                toggleCompanionPanel()
-                true
-            }
         }
 
         scope.launch { preferences.iconText.collect { labelView.text = it.ifBlank { "Ocean" } } }
@@ -146,6 +144,10 @@ class FloatingService : Service() {
         var startY = 0
         var touchX = 0f
         var touchY = 0f
+        var dragging = false
+        var longPressTriggered = false
+        var longPressJob: Job? = null
+        val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
         view.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
@@ -153,22 +155,55 @@ class FloatingService : Service() {
                     startY = params.y
                     touchX = event.rawX
                     touchY = event.rawY
-                    false
+                    dragging = false
+                    longPressTriggered = false
+                    longPressJob?.cancel()
+                    longPressJob = scope.launch {
+                        delay(ViewConfiguration.getLongPressTimeout().toLong())
+                        if (!dragging && bubble === view) {
+                            longPressTriggered = true
+                            toggleCompanionPanel()
+                        }
+                    }
+                    true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    params.x = startX + (event.rawX - touchX).toInt()
-                    params.y = startY + (event.rawY - touchY).toInt()
-                    windowManager.updateViewLayout(view, params)
+                    val dx = event.rawX - touchX
+                    val dy = event.rawY - touchY
+                    if (!dragging && (kotlin.math.abs(dx) > touchSlop || kotlin.math.abs(dy) > touchSlop)) {
+                        dragging = true
+                        longPressJob?.cancel()
+                    }
+                    if (dragging) {
+                        params.x = startX + dx.toInt()
+                        params.y = startY + dy.toInt()
+                        windowManager.updateViewLayout(view, params)
+                    }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    longPressJob?.cancel()
+                    if (longPressTriggered) {
+                        longPressTriggered = false
+                        return@setOnTouchListener true
+                    }
+                    if (dragging) {
+                        dragging = false
+                        return@setOnTouchListener true
+                    }
                     val now = System.currentTimeMillis()
                     if (now - lastTap < 320) {
                         speak("\u5df2\u52a0\u5165\u5feb\u901f\u8bc6\u5c4f\u5206\u6790\u961f\u5217\u3002")
-                    } else if (kotlin.math.abs(event.rawX - touchX) < 10 && kotlin.math.abs(event.rawY - touchY) < 10) {
+                    } else {
                         speak("${companionName()}\uff1a\u8981\u6211\u5206\u6790\u5f53\u524d\u5185\u5bb9\u5417\uff1f")
                     }
                     lastTap = now
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    longPressJob?.cancel()
+                    dragging = false
+                    longPressTriggered = false
                     true
                 }
                 else -> false
@@ -180,11 +215,14 @@ class FloatingService : Service() {
     }
 
     private fun toggleCompanionPanel() {
+        if (panelAnimating) return
         companionPanel?.let { panel ->
+            panelAnimating = true
             panelVisibleState.value = false
             panel.animate().alpha(0f).translationY(if (isPortrait()) 90f else 0f).translationX(if (isPortrait()) 0f else 90f).setDuration(220).withEndAction {
                 runCatching { windowManager.removeView(panel) }
                 companionPanel = null
+                panelAnimating = false
             }.start()
             return
         }
@@ -192,6 +230,8 @@ class FloatingService : Service() {
     }
 
     private suspend fun showCompanionPanel(importProactive: Boolean = true) {
+        if (panelAnimating || companionPanel != null) return
+        panelAnimating = true
         runCatching {
             val ratio = preferences.panelRatio.first().coerceIn(0.35f, 0.8f)
             val metrics = resources.displayMetrics
@@ -217,11 +257,14 @@ class FloatingService : Service() {
                 PixelFormat.TRANSLUCENT
             ).apply { gravity = panelGravity }
             windowManager.addView(panel, params)
-            panel.animate().alpha(1f).translationY(0f).translationX(0f).setDuration(320).setInterpolator(DecelerateInterpolator(1.8f)).start()
+            panel.animate().alpha(1f).translationY(0f).translationX(0f).setDuration(320).setInterpolator(DecelerateInterpolator(1.8f)).withEndAction {
+                panelAnimating = false
+            }.start()
             panelVisibleState.value = true
             if (importProactive) importVisibleProactiveLine()
         }.onFailure {
             companionPanel = null
+            panelAnimating = false
             Toast.makeText(this, "${companionName()}\uff1a\u9762\u677f\u542f\u52a8\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u60ac\u6d6e\u7a97\u6743\u9650\u3002", Toast.LENGTH_LONG).show()
         }
     }

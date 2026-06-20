@@ -44,6 +44,34 @@ class PreferencesStore(private val context: Context) {
     suspend fun setPanelRatio(value: Float) = context.dataStore.edit { it[Keys.PanelRatio] = value }
     suspend fun setProactiveReminders(value: Boolean) = context.dataStore.edit { it[Keys.ProactiveReminders] = value }
 
+    suspend fun saveSettings(
+        provider: String,
+        apiBaseUrl: String,
+        apiKey: String,
+        modelName: String,
+        userName: String,
+        companionName: String,
+        iconText: String,
+        customPersonaPrompt: String,
+        triggerAppNames: String,
+        speechIntervalMinutes: Int,
+        panelRatio: Float,
+        proactiveReminders: Boolean
+    ) = context.dataStore.edit {
+        it[Keys.Provider] = provider
+        it[Keys.ApiBaseUrl] = apiBaseUrl
+        it[Keys.ApiKey] = apiKey
+        it[Keys.ModelName] = modelName
+        it[Keys.UserName] = userName
+        it[Keys.CompanionName] = companionName
+        it[Keys.IconText] = iconText
+        it[Keys.CustomPersonaPrompt] = customPersonaPrompt
+        it[Keys.TriggerAppNames] = triggerAppNames
+        it[Keys.SpeechIntervalMinutes] = speechIntervalMinutes
+        it[Keys.PanelRatio] = panelRatio
+        it[Keys.ProactiveReminders] = proactiveReminders
+    }
+
     private object Keys {
         val Provider = stringPreferencesKey("provider")
         val ApiBaseUrl = stringPreferencesKey("api_base_url")

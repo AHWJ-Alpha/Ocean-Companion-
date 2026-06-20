@@ -223,8 +223,10 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     var panelRatioDraft by remember { mutableStateOf(panelRatio) }
     var proactiveDraft by remember { mutableStateOf(proactive) }
     var savedNotice by remember { mutableStateOf("") }
+    var draftsLoaded by remember { mutableStateOf(false) }
 
     LaunchedEffect(provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive) {
+        if (draftsLoaded) return@LaunchedEffect
         providerDraft = provider
         apiBaseUrlDraft = apiBaseUrl
         apiKeyDraft = apiKey
@@ -237,6 +239,7 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
         triggerAppsDraft = triggerApps
         panelRatioDraft = panelRatio
         proactiveDraft = proactive
+        draftsLoaded = true
     }
 
     LazyColumn(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -341,18 +344,20 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = {
                         scope.launch {
-                            store.setProvider(providerDraft.trim())
-                            store.setApiBaseUrl(apiBaseUrlDraft.trim())
-                            store.setApiKey(apiKeyDraft.trim())
-                            store.setModelName(modelNameDraft.trim())
-                            store.setUserName(userNameDraft.trim().ifBlank { "\u4f60" })
-                            store.setCompanionName(companionNameDraft.trim().ifBlank { "Ocean" })
-                            store.setIconText(iconTextDraft.trim().ifBlank { "Ocean" }.take(8))
-                            store.setCustomPersonaPrompt(personaPromptDraft)
-                            store.setTriggerAppNames(triggerAppsDraft.trim())
-                            store.setSpeechIntervalMinutes(speechIntervalDraft.coerceIn(1, 120))
-                            store.setPanelRatio(panelRatioDraft.coerceIn(0.35f, 0.8f))
-                            store.setProactiveReminders(proactiveDraft)
+                            store.saveSettings(
+                                provider = providerDraft.trim().ifBlank { "openai" },
+                                apiBaseUrl = apiBaseUrlDraft.trim(),
+                                apiKey = apiKeyDraft.trim(),
+                                modelName = modelNameDraft.trim(),
+                                userName = userNameDraft.trim().ifBlank { "\u4f60" },
+                                companionName = companionNameDraft.trim().ifBlank { "Ocean" },
+                                iconText = iconTextDraft.trim().ifBlank { "Ocean" }.take(8),
+                                customPersonaPrompt = personaPromptDraft,
+                                triggerAppNames = triggerAppsDraft.trim(),
+                                speechIntervalMinutes = speechIntervalDraft.coerceIn(1, 120),
+                                panelRatio = panelRatioDraft.coerceIn(0.35f, 0.8f),
+                                proactiveReminders = proactiveDraft
+                            )
                             savedNotice = "\u8bbe\u7f6e\u5df2\u4fdd\u5b58"
                         }
                     }, modifier = Modifier.fillMaxWidth()) {
