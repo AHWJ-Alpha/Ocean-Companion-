@@ -6,6 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -62,6 +64,7 @@ class FloatingService : Service() {
     private var lastRoutineSpeakAt = 0L
     private var currentUserName = "\u4f60"
     private var currentCompanionName = "Ocean"
+    private var currentCompanionTheme = CompanionTheme.default()
     private val conversationLines = mutableListOf<String>()
     private var panelVisibleState = mutableStateOf(false)
 
@@ -179,7 +182,7 @@ class FloatingService : Service() {
     private fun toggleCompanionPanel() {
         companionPanel?.let { panel ->
             panelVisibleState.value = false
-            panel.animate().alpha(0f).translationY(if (isPortrait()) 80f else 0f).setDuration(180).withEndAction {
+            panel.animate().alpha(0f).translationY(if (isPortrait()) 90f else 0f).translationX(if (isPortrait()) 0f else 90f).setDuration(220).withEndAction {
                 runCatching { windowManager.removeView(panel) }
                 companionPanel = null
             }.start()
@@ -193,13 +196,16 @@ class FloatingService : Service() {
             val ratio = preferences.panelRatio.first().coerceIn(0.35f, 0.8f)
             val metrics = resources.displayMetrics
             val portrait = isPortrait()
+            val theme = loadCompanionTheme()
+            currentCompanionTheme = theme
             val width = if (portrait) WindowManager.LayoutParams.MATCH_PARENT else (metrics.widthPixels * ratio).toInt()
             val height = if (portrait) (metrics.heightPixels * ratio).toInt() else WindowManager.LayoutParams.MATCH_PARENT
             val panelGravity = if (portrait) Gravity.BOTTOM else Gravity.END
 
-            val panel = buildNativeCompanionPanel(portrait).apply {
+            val panel = buildNativeCompanionPanel(portrait, theme).apply {
                 alpha = 0f
-                translationY = if (portrait) 80f else 0f
+                translationY = if (portrait) 90f else 0f
+                translationX = if (portrait) 0f else 90f
             }
 
             companionPanel = panel
@@ -211,7 +217,7 @@ class FloatingService : Service() {
                 PixelFormat.TRANSLUCENT
             ).apply { gravity = panelGravity }
             windowManager.addView(panel, params)
-            panel.animate().alpha(1f).translationY(0f).setDuration(220).start()
+            panel.animate().alpha(1f).translationY(0f).translationX(0f).setDuration(320).setInterpolator(DecelerateInterpolator(1.8f)).start()
             panelVisibleState.value = true
             importVisibleProactiveLine()
             if (announce) speak("${companionName()}\uff1a\u957f\u65f6\u4f34\u968f\u5df2\u5f00\u542f\u3002")
@@ -221,18 +227,18 @@ class FloatingService : Service() {
         }
     }
 
-    private fun buildNativeCompanionPanel(portrait: Boolean): View {
+    private fun buildNativeCompanionPanel(portrait: Boolean, theme: CompanionTheme): View {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(28, 24, 28, 24)
+            setPadding(30, 26, 30, 26)
             background = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
-                intArrayOf(Color.argb(218, 244, 251, 255), Color.argb(205, 212, 238, 255), Color.argb(188, 194, 255, 243))
+                intArrayOf(theme.surfaceStart, theme.surfaceMid, theme.surfaceEnd)
             ).apply {
-                cornerRadius = 34f
-                setStroke(2, Color.argb(185, 255, 255, 255))
+                cornerRadius = if (portrait) 34f else 30f
+                setStroke(2, theme.stroke)
             }
-            elevation = 16f
+            elevation = 26f
         }
 
         val titleRow = LinearLayout(this).apply {
@@ -242,16 +248,16 @@ class FloatingService : Service() {
         val title = TextView(this).apply {
             text = "${companionName()} \u957f\u65f6\u4f34\u968f"
             textSize = 18f
-            setTextColor(Color.rgb(18, 32, 48))
+            setTextColor(theme.textPrimary)
         }
         val close = AndroidButton(this).apply {
             text = "\u00d7"
             textSize = 18f
-            setTextColor(Color.rgb(18, 32, 48))
+            setTextColor(theme.textPrimary)
             background = GradientDrawable().apply {
-                setColor(Color.argb(95, 255, 255, 255))
+                setColor(theme.softOverlay)
                 cornerRadius = 28f
-                setStroke(1, Color.argb(140, 255, 255, 255))
+                setStroke(1, theme.stroke)
             }
             setOnClickListener { toggleCompanionPanel() }
         }
@@ -261,7 +267,7 @@ class FloatingService : Service() {
         val hint = TextView(this).apply {
             text = "\u5df2\u8fde\u63a5\u5c4f\u5e55/\u6587\u4ef6\u4e0a\u4e0b\u6587\u548c\u957f\u65f6\u8bb0\u5fc6\uff1b\u7ad6\u5c4f\u4e3a\u4e0b\u534a\u5c4f\uff0c\u6a2a\u5c4f\u4e3a\u53f3\u534a\u5c4f\u3002"
             textSize = 13f
-            setTextColor(Color.rgb(82, 96, 113))
+            setTextColor(theme.textSecondary)
             setPadding(0, 4, 0, 12)
         }
 
@@ -274,13 +280,13 @@ class FloatingService : Service() {
             tag = SCROLL_VIEW_TAG
             isFillViewport = true
             background = GradientDrawable().apply {
-                setColor(Color.argb(104, 255, 255, 255))
+                setColor(theme.glassPanel)
                 cornerRadius = 24f
-                setStroke(1, Color.argb(145, 255, 255, 255))
+                setStroke(1, theme.stroke)
             }
             addView(messages)
         }
-        renderConversationMessages(messages, scroll)
+        renderConversationMessages(messages, scroll, theme)
 
         val inputRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -290,12 +296,12 @@ class FloatingService : Service() {
         val input = EditText(this).apply {
             setHint("\u7ee7\u7eed\u5bf9\u8bdd")
             setSingleLine(true)
-            setTextColor(Color.rgb(22, 32, 44))
-            setHintTextColor(Color.rgb(98, 113, 128))
+            setTextColor(theme.textPrimary)
+            setHintTextColor(theme.textSecondary)
             background = GradientDrawable().apply {
-                setColor(Color.argb(170, 255, 255, 255))
+                setColor(theme.inputBackground)
                 cornerRadius = 18f
-                setStroke(1, Color.argb(180, 138, 203, 255))
+                setStroke(1, theme.primarySoft)
             }
             setPadding(18, 0, 18, 0)
         }
@@ -305,7 +311,7 @@ class FloatingService : Service() {
             setTextColor(Color.WHITE)
             background = GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(Color.rgb(14, 111, 255), Color.rgb(0, 166, 166))
+                intArrayOf(theme.primary, theme.accent)
             ).apply { cornerRadius = 22f }
             setOnClickListener {
                 val text = input.text.toString().trim()
@@ -407,6 +413,60 @@ class FloatingService : Service() {
             val info = packageManager.getApplicationInfo(packageName, 0)
             packageManager.getApplicationLabel(info).toString()
         }.getOrDefault("")
+    }
+
+    private suspend fun loadCompanionTheme(): CompanionTheme {
+        val uriText = preferences.iconImageUri.first()
+        val dominant = dominantColorFromUri(uriText) ?: return CompanionTheme.default()
+        return CompanionTheme.fromPrimary(dominant)
+    }
+
+    private fun dominantColorFromUri(uriText: String): Int? {
+        if (uriText.isBlank()) return null
+        return runCatching {
+            contentResolver.openInputStream(Uri.parse(uriText))?.use { input ->
+                BitmapFactory.decodeStream(input)?.let(::dominantColorFromBitmap)
+            }
+        }.getOrNull()
+    }
+
+    private fun dominantColorFromBitmap(bitmap: Bitmap): Int? {
+        val scaled = Bitmap.createScaledBitmap(bitmap, 28, 28, true)
+        var red = 0L
+        var green = 0L
+        var blue = 0L
+        var count = 0L
+        for (x in 0 until scaled.width) {
+            for (y in 0 until scaled.height) {
+                val color = scaled.getPixel(x, y)
+                if (Color.alpha(color) < 96) continue
+                val r = Color.red(color)
+                val g = Color.green(color)
+                val b = Color.blue(color)
+                val max = maxOf(r, g, b)
+                val min = minOf(r, g, b)
+                if (max < 36 || max - min < 10) continue
+                red += r
+                green += g
+                blue += b
+                count++
+            }
+        }
+        if (scaled !== bitmap) scaled.recycle()
+        return if (count > 0) Color.rgb((red / count).toInt(), (green / count).toInt(), (blue / count).toInt()) else null
+    }
+
+    private fun blendColors(from: Int, to: Int, ratio: Float): Int {
+        val inverse = 1f - ratio
+        return Color.rgb(
+            (Color.red(from) * inverse + Color.red(to) * ratio).toInt().coerceIn(0, 255),
+            (Color.green(from) * inverse + Color.green(to) * ratio).toInt().coerceIn(0, 255),
+            (Color.blue(from) * inverse + Color.blue(to) * ratio).toInt().coerceIn(0, 255)
+        )
+    }
+
+    private fun withAlpha(color: Int, alpha: Int): Int {
+        return Color.argb(alpha.coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
     }
 
     private fun showProactiveBanner(message: String) {
@@ -598,21 +658,21 @@ class FloatingService : Service() {
     private fun refreshConversationMessages() {
         val list = companionPanel?.findViewWithTag<LinearLayout>(MESSAGE_LIST_TAG) ?: return
         val scroll = companionPanel?.findViewWithTag<ScrollView>(SCROLL_VIEW_TAG)
-        renderConversationMessages(list, scroll)
+        renderConversationMessages(list, scroll, currentCompanionTheme)
     }
 
-    private fun renderConversationMessages(list: LinearLayout, scroll: ScrollView?) {
+    private fun renderConversationMessages(list: LinearLayout, scroll: ScrollView?, theme: CompanionTheme) {
         list.removeAllViews()
         val lines = if (conversationLines.isEmpty()) {
             listOf("${companionName()}\uff1a\u6211\u4f1a\u628a\u5c4f\u5e55\u4e0a\u7684\u91cd\u70b9\u548c ${userName()} \u7684\u504f\u597d\u7559\u5728\u8bb0\u5fc6\u91cc\u3002")
         } else {
             conversationLines.toList()
         }
-        lines.forEach { line -> list.addView(messageBubble(line)) }
+        lines.forEach { line -> list.addView(messageBubble(line, theme)) }
         scroll?.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }
 
-    private fun messageBubble(message: String): View {
+    private fun messageBubble(message: String, theme: CompanionTheme): View {
         val isUser = message.startsWith("${userName()}\uff1a")
         val isThinking = message.endsWith("\uff1a\u6b63\u5728\u601d\u8003...")
         val text = TextView(this).apply {
@@ -626,22 +686,22 @@ class FloatingService : Service() {
             setTextColor(
                 when {
                     isUser -> Color.WHITE
-                    isThinking -> Color.rgb(82, 96, 113)
-                    else -> Color.rgb(18, 32, 48)
+                    isThinking -> theme.textSecondary
+                    else -> theme.textPrimary
                 }
             )
             setPadding(18, 14, 18, 14)
             background = GradientDrawable().apply {
                 cornerRadius = 22f
                 if (isUser) {
-                    setColor(Color.rgb(14, 111, 255))
+                    setColor(theme.primary)
                     setStroke(1, Color.argb(90, 255, 255, 255))
                 } else if (isThinking) {
-                    setColor(Color.argb(78, 255, 255, 255))
-                    setStroke(1, Color.argb(100, 255, 255, 255))
+                    setColor(theme.softOverlay)
+                    setStroke(1, theme.stroke)
                 } else {
-                    setColor(Color.argb(172, 255, 255, 255))
-                    setStroke(1, Color.argb(145, 255, 255, 255))
+                    setColor(theme.messageBackground)
+                    setStroke(1, theme.stroke)
                 }
             }
         }
@@ -674,6 +734,67 @@ class FloatingService : Service() {
         val trimmed = trim()
         if (trimmed.contains('\uff1a') || trimmed.contains(':')) return trimmed
         return "$name\uff1a$trimmed"
+    }
+
+    private data class CompanionTheme(
+        val primary: Int,
+        val accent: Int,
+        val primarySoft: Int,
+        val surfaceStart: Int,
+        val surfaceMid: Int,
+        val surfaceEnd: Int,
+        val glassPanel: Int,
+        val inputBackground: Int,
+        val messageBackground: Int,
+        val softOverlay: Int,
+        val stroke: Int,
+        val textPrimary: Int,
+        val textSecondary: Int
+    ) {
+        companion object {
+            fun default(): CompanionTheme {
+                return fromPrimary(Color.rgb(20, 135, 180))
+            }
+
+            fun fromPrimary(primary: Int): CompanionTheme {
+                val accent = Color.rgb(
+                    (Color.blue(primary) * 0.55f + 82).toInt().coerceIn(0, 255),
+                    (Color.red(primary) * 0.45f + 92).toInt().coerceIn(0, 255),
+                    (Color.green(primary) * 0.65f + 104).toInt().coerceIn(0, 255)
+                )
+                val darkBase = Color.rgb(13, 19, 30)
+                val lightBase = Color.rgb(248, 252, 255)
+                val p = primary
+                return CompanionTheme(
+                    primary = p,
+                    accent = accent,
+                    primarySoft = withStaticAlpha(p, 175),
+                    surfaceStart = withStaticAlpha(blendStatic(darkBase, p, 0.42f), 236),
+                    surfaceMid = withStaticAlpha(blendStatic(darkBase, accent, 0.38f), 224),
+                    surfaceEnd = withStaticAlpha(blendStatic(lightBase, p, 0.30f), 214),
+                    glassPanel = withStaticAlpha(blendStatic(lightBase, p, 0.18f), 112),
+                    inputBackground = withStaticAlpha(lightBase, 184),
+                    messageBackground = withStaticAlpha(lightBase, 176),
+                    softOverlay = withStaticAlpha(lightBase, 94),
+                    stroke = withStaticAlpha(Color.WHITE, 158),
+                    textPrimary = Color.rgb(18, 28, 42),
+                    textSecondary = Color.rgb(78, 91, 108)
+                )
+            }
+
+            private fun blendStatic(from: Int, to: Int, ratio: Float): Int {
+                val inverse = 1f - ratio
+                return Color.rgb(
+                    (Color.red(from) * inverse + Color.red(to) * ratio).toInt().coerceIn(0, 255),
+                    (Color.green(from) * inverse + Color.green(to) * ratio).toInt().coerceIn(0, 255),
+                    (Color.blue(from) * inverse + Color.blue(to) * ratio).toInt().coerceIn(0, 255)
+                )
+            }
+
+            private fun withStaticAlpha(color: Int, alpha: Int): Int {
+                return Color.argb(alpha.coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
+            }
+        }
     }
 
     private companion object {
