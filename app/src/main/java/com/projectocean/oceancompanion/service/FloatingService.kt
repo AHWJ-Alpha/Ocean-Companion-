@@ -1,0 +1,688 @@
+package com.projectocean.oceancompanion.service
+
+import android.app.Service
+import android.app.usage.UsageStatsManager
+import android.content.Context
+import android.content.Intent
+import android.content.res.Configuration
+import android.net.Uri
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
+import android.os.IBinder
+import android.provider.Settings
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.widget.Button as AndroidButton
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
+import androidx.compose.runtime.mutableStateOf
+import androidx.core.content.ContextCompat
+import com.projectocean.oceancompanion.R
+import com.projectocean.oceancompanion.ai.CustomAIClient
+import com.projectocean.oceancompanion.ai.PromptEngine
+import com.projectocean.oceancompanion.agent.SharedScreenContext
+import com.projectocean.oceancompanion.memory.LongTermMemory
+import com.projectocean.oceancompanion.memory.OceanDatabase
+import com.projectocean.oceancompanion.memory.PreferencesStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+
+class FloatingService : Service() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private lateinit var windowManager: WindowManager
+    private lateinit var preferences: PreferencesStore
+    private lateinit var database: OceanDatabase
+    private val promptEngine = PromptEngine()
+    private var bubble: View? = null
+    private var companionPanel: View? = null
+    private var proactiveBanner: View? = null
+    private var pendingProactiveLine: String? = null
+    private var schedulerJob: Job? = null
+    private var lastTap = 0L
+    private var lastTriggeredPackage = ""
+    private var lastSeenPackage = ""
+    private var lastImmediateSpeakAt = 0L
+    private var lastRoutineSpeakAt = 0L
+    private var currentUserName = "\u4f60"
+    private var currentCompanionName = "Ocean"
+    private val conversationLines = mutableListOf<String>()
+    private var panelVisibleState = mutableStateOf(false)
+
+    override fun onCreate() {
+        super.onCreate()
+        preferences = PreferencesStore(this)
+        database = OceanDatabase.create(this)
+        startForeground(NotificationService.FLOATING_NOTIFICATION_ID, NotificationService.floatingNotification(this))
+        scope.launch { preferences.userName.collect { currentUserName = it.ifBlank { "\u4f60" } } }
+        scope.launch { preferences.companionName.collect { currentCompanionName = it.ifBlank { "Ocean" } } }
+        if (Settings.canDrawOverlays(this)) showBubble()
+        startAutoSpeechScheduler()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        schedulerJob?.cancel()
+        if (::windowManager.isInitialized) {
+            bubble?.let { runCatching { windowManager.removeView(it) } }
+            companionPanel?.let { runCatching { windowManager.removeView(it) } }
+            proactiveBanner?.let { runCatching { windowManager.removeView(it) } }
+        }
+        scope.cancel()
+        super.onDestroy()
+    }
+
+    private fun showBubble() {
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        val params = WindowManager.LayoutParams(
+            148,
+            148,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 28
+            y = 220
+        }
+
+        val labelView = TextView(this).apply {
+            text = "Ocean"
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(ContextCompat.getColor(this@FloatingService, android.R.color.white))
+        }
+        val imageView = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            visibility = View.GONE
+        }
+        val view = FrameLayout(this).apply {
+            background = ContextCompat.getDrawable(this@FloatingService, R.drawable.ocean_bubble)
+            elevation = 12f
+            addView(imageView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+            addView(labelView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+            clipToOutline = true
+            setOnLongClickListener {
+                toggleCompanionPanel()
+                true
+            }
+        }
+
+        scope.launch { preferences.iconText.collect { labelView.text = it.ifBlank { "Ocean" } } }
+        scope.launch {
+            preferences.iconImageUri.collect { uriText ->
+                if (uriText.isBlank()) {
+                    imageView.visibility = View.GONE
+                    labelView.visibility = View.VISIBLE
+                } else {
+                    imageView.setImageURI(Uri.parse(uriText))
+                    imageView.visibility = View.VISIBLE
+                    labelView.visibility = View.GONE
+                }
+            }
+        }
+
+        var startX = 0
+        var startY = 0
+        var touchX = 0f
+        var touchY = 0f
+        view.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    startX = params.x
+                    startY = params.y
+                    touchX = event.rawX
+                    touchY = event.rawY
+                    false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    params.x = startX + (event.rawX - touchX).toInt()
+                    params.y = startY + (event.rawY - touchY).toInt()
+                    windowManager.updateViewLayout(view, params)
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    val now = System.currentTimeMillis()
+                    if (now - lastTap < 320) {
+                        speak("\u5df2\u52a0\u5165\u5feb\u901f\u8bc6\u5c4f\u5206\u6790\u961f\u5217\u3002")
+                    } else if (kotlin.math.abs(event.rawX - touchX) < 10 && kotlin.math.abs(event.rawY - touchY) < 10) {
+                        speak("${companionName()}\uff1a\u8981\u6211\u5206\u6790\u5f53\u524d\u5185\u5bb9\u5417\uff1f")
+                    }
+                    lastTap = now
+                    true
+                }
+                else -> false
+            }
+        }
+
+        bubble = view
+        windowManager.addView(view, params)
+    }
+
+    private fun toggleCompanionPanel() {
+        companionPanel?.let { panel ->
+            panelVisibleState.value = false
+            panel.animate().alpha(0f).translationY(if (isPortrait()) 80f else 0f).setDuration(180).withEndAction {
+                runCatching { windowManager.removeView(panel) }
+                companionPanel = null
+            }.start()
+            return
+        }
+        scope.launch { showCompanionPanel() }
+    }
+
+    private suspend fun showCompanionPanel(announce: Boolean = true) {
+        runCatching {
+            val ratio = preferences.panelRatio.first().coerceIn(0.35f, 0.8f)
+            val metrics = resources.displayMetrics
+            val portrait = isPortrait()
+            val width = if (portrait) WindowManager.LayoutParams.MATCH_PARENT else (metrics.widthPixels * ratio).toInt()
+            val height = if (portrait) (metrics.heightPixels * ratio).toInt() else WindowManager.LayoutParams.MATCH_PARENT
+            val panelGravity = if (portrait) Gravity.BOTTOM else Gravity.END
+
+            val panel = buildNativeCompanionPanel(portrait).apply {
+                alpha = 0f
+                translationY = if (portrait) 80f else 0f
+            }
+
+            companionPanel = panel
+            val params = WindowManager.LayoutParams(
+                width,
+                height,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT
+            ).apply { gravity = panelGravity }
+            windowManager.addView(panel, params)
+            panel.animate().alpha(1f).translationY(0f).setDuration(220).start()
+            panelVisibleState.value = true
+            importVisibleProactiveLine()
+            if (announce) speak("${companionName()}\uff1a\u957f\u65f6\u4f34\u968f\u5df2\u5f00\u542f\u3002")
+        }.onFailure {
+            companionPanel = null
+            Toast.makeText(this, "${companionName()}\uff1a\u9762\u677f\u542f\u52a8\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u60ac\u6d6e\u7a97\u6743\u9650\u3002", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun buildNativeCompanionPanel(portrait: Boolean): View {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(28, 24, 28, 24)
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(Color.argb(218, 244, 251, 255), Color.argb(205, 212, 238, 255), Color.argb(188, 194, 255, 243))
+            ).apply {
+                cornerRadius = 34f
+                setStroke(2, Color.argb(185, 255, 255, 255))
+            }
+            elevation = 16f
+        }
+
+        val titleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val title = TextView(this).apply {
+            text = "${companionName()} \u957f\u65f6\u4f34\u968f"
+            textSize = 18f
+            setTextColor(Color.rgb(18, 32, 48))
+        }
+        val close = AndroidButton(this).apply {
+            text = "\u00d7"
+            textSize = 18f
+            setTextColor(Color.rgb(18, 32, 48))
+            background = GradientDrawable().apply {
+                setColor(Color.argb(95, 255, 255, 255))
+                cornerRadius = 28f
+                setStroke(1, Color.argb(140, 255, 255, 255))
+            }
+            setOnClickListener { toggleCompanionPanel() }
+        }
+        titleRow.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        titleRow.addView(close, LinearLayout.LayoutParams(72, 64))
+
+        val hint = TextView(this).apply {
+            text = "\u5df2\u8fde\u63a5\u5c4f\u5e55/\u6587\u4ef6\u4e0a\u4e0b\u6587\u548c\u957f\u65f6\u8bb0\u5fc6\uff1b\u7ad6\u5c4f\u4e3a\u4e0b\u534a\u5c4f\uff0c\u6a2a\u5c4f\u4e3a\u53f3\u534a\u5c4f\u3002"
+            textSize = 13f
+            setTextColor(Color.rgb(82, 96, 113))
+            setPadding(0, 4, 0, 12)
+        }
+
+        val messages = LinearLayout(this).apply {
+            tag = MESSAGE_LIST_TAG
+            orientation = LinearLayout.VERTICAL
+            setPadding(10, 10, 10, 10)
+        }
+        val scroll = ScrollView(this).apply {
+            tag = SCROLL_VIEW_TAG
+            isFillViewport = true
+            background = GradientDrawable().apply {
+                setColor(Color.argb(104, 255, 255, 255))
+                cornerRadius = 24f
+                setStroke(1, Color.argb(145, 255, 255, 255))
+            }
+            addView(messages)
+        }
+        renderConversationMessages(messages, scroll)
+
+        val inputRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 12, 0, 0)
+        }
+        val input = EditText(this).apply {
+            setHint("\u7ee7\u7eed\u5bf9\u8bdd")
+            setSingleLine(true)
+            setTextColor(Color.rgb(22, 32, 44))
+            setHintTextColor(Color.rgb(98, 113, 128))
+            background = GradientDrawable().apply {
+                setColor(Color.argb(170, 255, 255, 255))
+                cornerRadius = 18f
+                setStroke(1, Color.argb(180, 138, 203, 255))
+            }
+            setPadding(18, 0, 18, 0)
+        }
+        val send = AndroidButton(this).apply {
+            setText("\u2192")
+            textSize = 22f
+            setTextColor(Color.WHITE)
+            background = GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(Color.rgb(14, 111, 255), Color.rgb(0, 166, 166))
+            ).apply { cornerRadius = 22f }
+            setOnClickListener {
+                val text = input.text.toString().trim()
+                if (text.isNotBlank()) {
+                    input.setText("")
+                    appendConversationLine("${userName()}\uff1a$text", remember = true)
+                    appendConversationLine("${companionName()}\uff1a\u6b63\u5728\u601d\u8003...", remember = false)
+                    scope.launch {
+                        removeThinkingLine()
+                        speak(generateManualReply(text))
+                    }
+                }
+            }
+        }
+        inputRow.addView(input, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        inputRow.addView(send, LinearLayout.LayoutParams(72, 64).apply { leftMargin = 10 })
+
+        container.addView(titleRow)
+        container.addView(hint)
+        container.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        container.addView(inputRow)
+        return container
+    }
+
+    private fun isPortrait(): Boolean = resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE
+
+    private fun startAutoSpeechScheduler() {
+        schedulerJob = scope.launch {
+            while (true) {
+                val enabled = preferences.proactiveReminders.first()
+                if (enabled) {
+                    val triggerApps = preferences.triggerAppNames.first().ifBlank { "\u5b66\u4e60,PDF,PPT,Word,Chrome" }
+                    val currentPackage = resolveCurrentPackage()
+                    val now = System.currentTimeMillis()
+                    val matchedApp = currentPackage.isNotBlank() && matchesTriggerApp(currentPackage, triggerApps)
+                    val enteredMatchedApp = matchedApp && currentPackage != lastTriggeredPackage
+                    val canImmediateSpeak = now - lastImmediateSpeakAt > IMMEDIATE_APP_COOLDOWN_MS
+                    if (enteredMatchedApp && canImmediateSpeak) {
+                        lastTriggeredPackage = currentPackage
+                        lastSeenPackage = currentPackage
+                        lastImmediateSpeakAt = now
+                        showProactiveBanner(generateCompanionLine(triggerApps, reason = "app_enter", packageName = currentPackage))
+                    } else if (currentPackage.isNotBlank()) {
+                        lastSeenPackage = currentPackage
+                    }
+
+                    val minutes = preferences.speechIntervalMinutes.first().coerceIn(1, 120)
+                    val routineDue = now - lastRoutineSpeakAt >= minutes * 60_000L
+                    if (routineDue && currentPackage.isBlank()) {
+                        lastRoutineSpeakAt = now
+                        showProactiveBanner(generateCompanionLine(triggerApps, reason = "routine_check", packageName = currentPackage))
+                    }
+
+                    if (currentPackage.isBlank() || !matchedApp) {
+                        lastTriggeredPackage = ""
+                    }
+                }
+                delay(ACTIVE_APP_CHECK_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun resolveCurrentPackage(): String {
+        val contextPackage = SharedScreenContext.packageName
+        val contextFresh = System.currentTimeMillis() - SharedScreenContext.updatedAt < SCREEN_CONTEXT_FRESH_MS
+        if (contextPackage.isNotBlank() && contextFresh) return contextPackage
+
+        val usagePackage = recentForegroundPackage()
+        if (usagePackage.isNotBlank()) {
+            SharedScreenContext.updatePackage(usagePackage, source = "usage_stats")
+            return usagePackage
+        }
+        return contextPackage.ifBlank { lastSeenPackage }
+    }
+
+    private fun recentForegroundPackage(): String {
+        return runCatching {
+            val manager = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+            val now = System.currentTimeMillis()
+            manager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - USAGE_STATS_LOOKBACK_MS, now)
+                .orEmpty()
+                .filter { it.packageName != packageName && it.lastTimeUsed > 0L }
+                .maxByOrNull { it.lastTimeUsed }
+                ?.packageName
+                .orEmpty()
+        }.getOrDefault("")
+    }
+
+    private fun matchesTriggerApp(currentPackage: String, triggerApps: String): Boolean {
+        val appLabel = currentAppLabel(currentPackage)
+        return triggerApps.split(',', '\uff0c').map { it.trim() }.filter { it.isNotBlank() }.any { keyword ->
+            currentPackage.contains(keyword, ignoreCase = true) || appLabel.contains(keyword, ignoreCase = true)
+        }
+    }
+
+    private fun currentAppLabel(packageName: String): String {
+        if (packageName.isBlank()) return ""
+        return runCatching {
+            val info = packageManager.getApplicationInfo(packageName, 0)
+            packageManager.getApplicationLabel(info).toString()
+        }.getOrDefault("")
+    }
+
+    private fun showProactiveBanner(message: String) {
+        if (!::windowManager.isInitialized || message.isBlank()) return
+        clearProactiveBanner(import = false)
+        pendingProactiveLine = message
+
+        val text = TextView(this).apply {
+            this.text = message
+            textSize = 15f
+            setTextColor(Color.WHITE)
+            setPadding(28, 18, 28, 18)
+            maxLines = 3
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(Color.argb(230, 16, 28, 45), Color.argb(218, 25, 124, 150), Color.argb(205, 105, 115, 224))
+            ).apply {
+                cornerRadius = 34f
+                setStroke(2, Color.argb(155, 227, 247, 255))
+            }
+            elevation = 24f
+            alpha = 0f
+            scaleX = 0.96f
+            scaleY = 0.96f
+            translationY = -42f
+            setOnClickListener { openCompanionPanelFromProactiveBanner() }
+            setOnLongClickListener {
+                openCompanionPanelFromProactiveBanner()
+                true
+            }
+        }
+
+        val width = (resources.displayMetrics.widthPixels * 0.88f).toInt()
+        val params = WindowManager.LayoutParams(
+            width,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = 72
+        }
+
+        proactiveBanner = text
+        runCatching { windowManager.addView(text, params) }
+            .onSuccess {
+                text.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .setInterpolator(DecelerateInterpolator(1.7f))
+                    .setDuration(360)
+                    .start()
+                text.postDelayed({
+                    if (proactiveBanner === text) clearProactiveBanner(import = false)
+                }, PROACTIVE_BANNER_DURATION_MS)
+            }
+            .onFailure {
+                proactiveBanner = null
+                pendingProactiveLine = null
+            }
+    }
+
+    private fun importVisibleProactiveLine() {
+        clearProactiveBanner(import = true)
+    }
+
+    private fun openCompanionPanelFromProactiveBanner() {
+        if (companionPanel != null) {
+            importVisibleProactiveLine()
+            return
+        }
+        scope.launch { showCompanionPanel(announce = false) }
+    }
+
+    private fun clearProactiveBanner(import: Boolean) {
+        val line = pendingProactiveLine
+        if (import && !line.isNullOrBlank()) appendConversationLine(line, remember = true)
+        pendingProactiveLine = null
+        val banner = proactiveBanner ?: return
+        proactiveBanner = null
+        banner.animate()
+            .alpha(0f)
+            .translationY(-36f)
+            .scaleX(0.98f)
+            .scaleY(0.98f)
+            .setInterpolator(AccelerateInterpolator(1.4f))
+            .setDuration(260)
+            .withEndAction { runCatching { windowManager.removeView(banner) } }
+            .start()
+    }
+
+    private suspend fun generateCompanionLine(triggerApps: String, reason: String, packageName: String = SharedScreenContext.packageName): String {
+        val screenText = SharedScreenContext.visibleText.ifBlank { "No visible text captured yet." }
+        val memoryText = recentMemoryText()
+        val customPersona = preferences.customPersonaPrompt.first()
+        val name = companionName()
+        val user = userName()
+        val currentPackage = packageName.ifBlank { SharedScreenContext.packageName }
+        val appLabel = currentAppLabel(currentPackage)
+        val source = SharedScreenContext.source.ifBlank { "unknown" }
+        val apiKey = preferences.apiKey.first()
+        val baseUrl = preferences.apiBaseUrl.first()
+        val model = preferences.modelName.first()
+        val appName = appLabel.ifBlank { currentPackage.ifBlank { "\u5f53\u524d\u684c\u9762" } }
+        val localFallback = "$name\uff1a$user\uff0c$appName \u8fd9\u8fb9\u6211\u770b\u7740\u4e86\u3002\u6709\u660e\u786e\u6587\u672c\u65f6\u6211\u4f1a\u53ea\u6311\u5173\u952e\u5904\u63d0\u9192\uff0c\u4e0d\u4f1a\u4e71\u63d2\u8bdd\u3002"
+        if (apiKey.isBlank() || baseUrl.isBlank() || model.isBlank()) return localFallback
+        return try {
+            val request = promptEngine.buildProactiveCompanionPrompt(
+                screenText = screenText,
+                customPersona = "AI name: $name\nUser name: $user\nCurrent app: $appName\nContext source: $source\nTrigger reason: $reason\n$customPersona",
+                memory = memoryText,
+                operationHistory = proactiveHistoryText(),
+                triggerApps = triggerApps,
+                currentPackage = currentPackage
+            )
+            val response = CustomAIClient(baseUrl, apiKey, model).complete(request)
+            response.text.ifBlank { localFallback }.withCompanionName(name)
+        } catch (_: Exception) {
+            localFallback
+        }
+    }
+
+    private suspend fun generateManualReply(userText: String): String {
+        val context = SharedScreenContext.visibleText
+        val customPersona = preferences.customPersonaPrompt.first()
+        val apiKey = preferences.apiKey.first()
+        val baseUrl = preferences.apiBaseUrl.first()
+        val model = preferences.modelName.first()
+        val memoryText = recentMemoryText()
+        val name = companionName()
+        val user = userName()
+        val fallback = "$name\uff1a\u8fd8\u6ca1\u6709\u914d\u7f6e\u53ef\u7528\u7684 AI API\u3002\u8bf7\u5728\u8bbe\u7f6e\u91cc\u586b\u5199 Base URL\u3001API Key \u548c\u6a21\u578b\u540d\u79f0\uff0c\u7136\u540e\u70b9\u51fb\u4fdd\u5b58\u8bbe\u7f6e\u3002"
+        if (apiKey.isBlank() || baseUrl.isBlank() || model.isBlank()) return fallback
+        return try {
+            val request = promptEngine.buildLongConversationPrompt(
+                userText = userText,
+                screenText = context.ifBlank { "No visible text captured yet." },
+                customPersona = "AI name: $name\nUser name: $user\n$customPersona",
+                memory = memoryText,
+                conversation = conversationText()
+            )
+            CustomAIClient(baseUrl, apiKey, model).complete(request).text.ifBlank { fallback }.withCompanionName(name)
+        } catch (_: Exception) {
+            "$name\uff1aAI \u8bf7\u6c42\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5 API \u5730\u5740\u3001Key\u3001\u6a21\u578b\u540d\u79f0\u548c\u7f51\u7edc\u8fde\u63a5\u3002"
+        }
+    }
+
+    private suspend fun recentMemoryText(): String = try {
+        database.dao().longTermMemories().first().take(10).joinToString("\n") { memory ->
+            "${memory.title}: ${memory.summary}"
+        }
+    } catch (_: Exception) {
+        ""
+    }
+
+    private fun rememberCompanionLine(message: String) {
+        scope.launch(Dispatchers.IO) {
+            database.dao().saveMemory(
+                LongTermMemory(
+                    title = "Companion line",
+                    summary = message.take(500),
+                    sourceApp = SharedScreenContext.packageName,
+                    importance = 1
+                )
+            )
+        }
+    }
+
+    private fun speak(message: String) {
+        appendConversationLine(message, remember = true)
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun appendConversationLine(message: String, remember: Boolean) {
+        conversationLines += message
+        if (remember) rememberCompanionLine(message)
+        if (conversationLines.size > 40) conversationLines.removeAt(0)
+        refreshConversationMessages()
+    }
+
+    private fun removeThinkingLine() {
+        conversationLines.removeAll { it.endsWith("\uff1a\u6b63\u5728\u601d\u8003...") }
+        refreshConversationMessages()
+    }
+
+    private fun refreshConversationMessages() {
+        val list = companionPanel?.findViewWithTag<LinearLayout>(MESSAGE_LIST_TAG) ?: return
+        val scroll = companionPanel?.findViewWithTag<ScrollView>(SCROLL_VIEW_TAG)
+        renderConversationMessages(list, scroll)
+    }
+
+    private fun renderConversationMessages(list: LinearLayout, scroll: ScrollView?) {
+        list.removeAllViews()
+        val lines = if (conversationLines.isEmpty()) {
+            listOf("${companionName()}\uff1a\u6211\u4f1a\u628a\u5c4f\u5e55\u4e0a\u7684\u91cd\u70b9\u548c ${userName()} \u7684\u504f\u597d\u7559\u5728\u8bb0\u5fc6\u91cc\u3002")
+        } else {
+            conversationLines.toList()
+        }
+        lines.forEach { line -> list.addView(messageBubble(line)) }
+        scroll?.post { scroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun messageBubble(message: String): View {
+        val isUser = message.startsWith("${userName()}\uff1a")
+        val isThinking = message.endsWith("\uff1a\u6b63\u5728\u601d\u8003...")
+        val text = TextView(this).apply {
+            this.text = message
+            textSize = if (isThinking) 13f else 15f
+            maxWidth = if (isPortrait()) {
+                (resources.displayMetrics.widthPixels * 0.78f).toInt()
+            } else {
+                (resources.displayMetrics.widthPixels * 0.42f).toInt()
+            }
+            setTextColor(
+                when {
+                    isUser -> Color.WHITE
+                    isThinking -> Color.rgb(82, 96, 113)
+                    else -> Color.rgb(18, 32, 48)
+                }
+            )
+            setPadding(18, 14, 18, 14)
+            background = GradientDrawable().apply {
+                cornerRadius = 22f
+                if (isUser) {
+                    setColor(Color.rgb(14, 111, 255))
+                    setStroke(1, Color.argb(90, 255, 255, 255))
+                } else if (isThinking) {
+                    setColor(Color.argb(78, 255, 255, 255))
+                    setStroke(1, Color.argb(100, 255, 255, 255))
+                } else {
+                    setColor(Color.argb(172, 255, 255, 255))
+                    setStroke(1, Color.argb(145, 255, 255, 255))
+                }
+            }
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = if (isUser) Gravity.END else Gravity.START
+            setPadding(2, 6, 2, 6)
+            addView(text, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+        return row
+    }
+
+    private fun conversationText(): String {
+        if (conversationLines.isEmpty()) return "${companionName()}\uff1a\u6211\u4f1a\u628a\u5c4f\u5e55\u4e0a\u7684\u91cd\u70b9\u548c ${userName()} \u7684\u504f\u597d\u7559\u5728\u8bb0\u5fc6\u91cc\u3002"
+        return conversationLines.joinToString("\n\n")
+    }
+
+    private fun proactiveHistoryText(): String {
+        return conversationLines.takeLast(8).joinToString("\n").ifBlank { "No recent conversation." }
+    }
+
+    private fun companionName(): String = currentCompanionName.ifBlank { "Ocean" }
+
+    private fun userName(): String = currentUserName.ifBlank { "\u4f60" }
+
+    private fun String.withCompanionName(name: String): String {
+        val trimmed = trim()
+        if (trimmed.contains('\uff1a') || trimmed.contains(':')) return trimmed
+        return "$name\uff1a$trimmed"
+    }
+
+    private companion object {
+        const val MESSAGE_LIST_TAG = "ocean_message_list"
+        const val SCROLL_VIEW_TAG = "ocean_message_scroll"
+        const val ACTIVE_APP_CHECK_INTERVAL_MS = 3_000L
+        const val IMMEDIATE_APP_COOLDOWN_MS = 45_000L
+        const val PROACTIVE_BANNER_DURATION_MS = 8_000L
+        const val SCREEN_CONTEXT_FRESH_MS = 12_000L
+        const val USAGE_STATS_LOOKBACK_MS = 30_000L
+    }
+}

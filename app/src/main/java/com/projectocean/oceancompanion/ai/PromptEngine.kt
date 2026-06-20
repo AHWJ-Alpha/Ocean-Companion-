@@ -1,0 +1,116 @@
+package com.projectocean.oceancompanion.ai
+
+class PromptEngine {
+    fun buildScreenAnalysisPrompt(text: String, persona: Persona): AIRequest {
+        val prompt = """
+            \u8bf7\u5206\u6790\u5f53\u524d\u5c4f\u5e55\u5185\u5bb9\u3002
+            \u8f93\u51fa\uff1a\u6458\u8981\u3001\u5173\u952e\u70b9\u3001\u4e0b\u4e00\u6b65\u5efa\u8bae\u3002
+
+            \u5c4f\u5e55\u6587\u672c\uff1a
+            $text
+        """.trimIndent()
+        return AIRequest(prompt = prompt, persona = persona, context = text)
+    }
+
+    fun buildProblemSolvingPrompt(text: String, persona: Persona): AIRequest {
+        val prompt = """
+            \u8bf7\u89e3\u7b54\u6216\u89e3\u91ca\u4e0b\u9762\u7684\u5b66\u4e60\u9898\u76ee\u3002
+            \u4f7f\u7528\u6e05\u6670\u6b65\u9aa4\uff0c\u5fc5\u8981\u65f6\u8bf4\u660e\u5047\u8bbe\u6761\u4ef6\u3002
+
+            \u9898\u76ee\u5185\u5bb9\uff1a
+            $text
+        """.trimIndent()
+        return AIRequest(prompt = prompt, persona = persona, context = text)
+    }
+
+    fun buildCompanionPrompt(screenText: String, customPersona: String, memory: String): AIRequest {
+        val prompt = """
+            \u4f60\u662f\u684c\u9762\u4f34\u968f\u5f0f AI\u3002\u8bf7\u6839\u636e\u5f53\u524d\u5c4f\u5e55\u4fe1\u606f\u4e3b\u52a8\u8bf4\u4e00\u53e5\u6709\u7528\u3001\u7b80\u77ed\u7684\u8bdd\u3002
+            \u4e0d\u8981\u5199\u957f\u7bc7\u8bf4\u660e\uff0c\u4e0d\u8981\u6253\u6270\u7528\u6237\u3002
+
+            \u81ea\u5b9a\u4e49\u4eba\u683c\uff1a
+            $customPersona
+
+            \u957f\u65f6\u8bb0\u5fc6\uff1a
+            $memory
+
+            \u5f53\u524d\u5c4f\u5e55\u6587\u672c\uff1a
+            $screenText
+        """.trimIndent()
+        return AIRequest(prompt = prompt, persona = Persona.OceanNative, context = screenText)
+    }
+
+    fun buildProactiveCompanionPrompt(
+        screenText: String,
+        customPersona: String,
+        memory: String,
+        operationHistory: String,
+        triggerApps: String,
+        currentPackage: String
+    ): AIRequest {
+        val prompt = """
+            \u4f60\u662f Ocean Companion\uff0c\u4e00\u4e2a\u684c\u9762\u4f34\u968f\u5f0f AI Agent\u3002
+            \u8fd9\u4e0d\u662f\u804a\u5929\u56de\u590d\uff0c\u800c\u662f\u4e00\u6761\u77ed\u6682\u51fa\u73b0\u7684\u684c\u9762\u5f39\u5e55\u3002
+            \u8bf7\u7ed3\u5408\u5f53\u524d\u684c\u9762\u5185\u5bb9\u3001\u5f53\u524d\u5e94\u7528\u3001\u6700\u8fd1\u64cd\u4f5c/\u5bf9\u8bdd\u5386\u53f2\u3001\u957f\u671f\u8bb0\u5fc6\u548c\u4eba\u683c\u8bf4\u660e\uff0c\u4e3b\u52a8\u8bf4\u4e00\u53e5\u81ea\u7136\u3001\u6709\u573a\u666f\u611f\u3001\u4e0d\u6253\u6270\u7684\u8bdd\u3002
+            \u8981\u6c42\uff1a
+            1. \u4f18\u5148\u56de\u5e94\u7528\u6237\u6b63\u5728\u770b\u7684\u5185\u5bb9\u6216\u6b63\u5728\u505a\u7684\u4e8b\u3002
+            2. \u5982\u679c\u5c4f\u5e55\u6587\u672c\u8db3\u591f\u660e\u786e\uff0c\u5fc5\u987b\u70b9\u51fa\u4e00\u4e2a\u5177\u4f53\u5173\u952e\u8bcd\u3001\u9898\u76ee\u6216\u4efb\u52a1\uff1b\u5982\u679c\u6587\u672c\u4e0d\u8db3\uff0c\u5c31\u53ea\u7ed3\u5408\u5e94\u7528\u540d/\u5305\u540d\u548c\u4eba\u683c\u53d1\u8a00\u3002
+            3. \u53ef\u4ee5\u63d0\u9192\u3001\u603b\u7ed3\u3001\u63d0\u95ee\u6216\u7ed9\u51fa\u4e0b\u4e00\u6b65\u5efa\u8bae\uff0c\u4f46\u4e0d\u8981\u7f16\u9020\u6ca1\u6709\u7684\u5c4f\u5e55\u4fe1\u606f\u3002
+            3. \u6700\u8fd1\u64cd\u4f5c/\u5bf9\u8bdd\u5386\u53f2\u53ea\u7528\u4e8e\u7406\u89e3\u504f\u597d\u548c\u8fde\u7eed\u6027\uff0c\u4e0d\u8981\u590d\u8ff0\u65e7\u5bf9\u8bdd\u3002
+            4. \u907f\u514d\u6cdb\u6cdb\u5bd2\u6684\uff0c\u4e0d\u8981\u8bf4\u201c\u6211\u8fd8\u5728\u201d\u201c\u9700\u8981\u6211\u603b\u7ed3\u5417\u201d\u201c\u6709\u9700\u8981\u968f\u65f6\u53eb\u6211\u201d\u8fd9\u7c7b\u7a7a\u8bdd\u3002
+            5. \u5fc5\u987b\u751f\u6210\u4e00\u53e5\u65b0\u7684\u4e3b\u52a8\u53d1\u8a00\uff0c\u4e0d\u8981\u628a\u5b83\u5199\u6210\u5bf9\u65e7\u5bf9\u8bdd\u7684\u56de\u590d\u3002
+            6. \u53ea\u8f93\u51fa\u4e00\u5230\u4e24\u53e5\uff0c\u9002\u5408\u5c4f\u5e55\u5f39\u5e55\u9605\u8bfb\uff0c\u4e0d\u8981\u5199\u6807\u9898\u3001\u5217\u8868\u6216\u7cfb\u7edf\u89e3\u91ca\u3002
+            7. \u8bed\u6c14\u5fc5\u987b\u9075\u5faa\u4eba\u683c\u8bf4\u660e\u3002
+
+            \u4eba\u683c\u8bf4\u660e\uff1a
+            $customPersona
+
+            \u89e6\u53d1\u5e94\u7528\u5173\u952e\u8bcd\uff1a
+            $triggerApps
+
+            \u5f53\u524d\u5e94\u7528\u5305\u540d\uff1a
+            $currentPackage
+
+            \u957f\u671f\u8bb0\u5fc6\uff1a
+            $memory
+
+            \u6700\u8fd1\u64cd\u4f5c/\u5bf9\u8bdd\u5386\u53f2\uff1a
+            $operationHistory
+
+            \u5f53\u524d\u684c\u9762/\u6587\u4ef6\u6587\u672c\uff1a
+            $screenText
+        """.trimIndent()
+        return AIRequest(prompt = prompt, persona = Persona.OceanNative, context = screenText)
+    }
+
+    fun buildLongConversationPrompt(
+        userText: String,
+        screenText: String,
+        customPersona: String,
+        memory: String,
+        conversation: String
+    ): AIRequest {
+        val prompt = """
+            \u4f60\u662f Ocean Companion\uff0c\u4e00\u4e2a\u5e38\u9a7b\u684c\u9762\u7684\u4f34\u968f\u5f0f AI\u3002
+            \u8bf7\u76f4\u63a5\u56de\u7b54\u7528\u6237\uff0c\u5e76\u4e3b\u52a8\u7ed3\u5408\u5f53\u524d\u684c\u9762/\u6587\u4ef6\u6587\u672c\u3001\u957f\u671f\u8bb0\u5fc6\u548c\u6700\u8fd1\u5bf9\u8bdd\u3002
+            \u5982\u679c\u5c4f\u5e55\u6587\u672c\u4e3a\u7a7a\uff0c\u5c31\u57fa\u4e8e\u957f\u671f\u8bb0\u5fc6\u548c\u5f53\u524d\u5bf9\u8bdd\u7ee7\u7eed\u804a\u3002
+            \u56de\u7b54\u8981\u81ea\u7136\u3001\u7b80\u6d01\u3001\u6709\u5e2e\u52a9\u3002\u5fc5\u8981\u65f6\u53ef\u4ee5\u8ffd\u95ee\u4e00\u4e2a\u95ee\u9898\u3002
+
+            \u81ea\u5b9a\u4e49\u4eba\u683c\uff1a
+            $customPersona
+
+            \u957f\u671f\u8bb0\u5fc6\uff1a
+            $memory
+
+            \u5f53\u524d\u684c\u9762/\u6587\u4ef6\u6587\u672c\uff1a
+            $screenText
+
+            \u6700\u8fd1\u5bf9\u8bdd\uff1a
+            $conversation
+
+            \u7528\u6237\u521a\u521a\u8bf4\uff1a
+            $userText
+        """.trimIndent()
+        return AIRequest(prompt = prompt, persona = Persona.OceanNative, context = screenText)
+    }
+}

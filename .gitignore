@@ -1,0 +1,12 @@
+.gradle/
+.idea/
+.kotlin/
+build/
+app/build/
+outputs/
+work/
+local.properties
+*.iml
+*.apk
+*.aab
+*.zip
