@@ -78,6 +78,7 @@ class FloatingService : Service() {
     private var companionPanelParams: WindowManager.LayoutParams? = null
     private var currentUserName = "\u4f60"
     private var currentCompanionName = "Ocean"
+    private var currentProactiveBannerMaxChars = 60
     private var currentCompanionTheme = CompanionTheme.default()
     private val conversationLines = mutableListOf<String>()
     private var panelVisibleState = mutableStateOf(false)
@@ -89,6 +90,7 @@ class FloatingService : Service() {
         startForeground(NotificationService.FLOATING_NOTIFICATION_ID, NotificationService.floatingNotification(this))
         scope.launch { preferences.userName.collect { currentUserName = it.ifBlank { "\u4f60" } } }
         scope.launch { preferences.companionName.collect { currentCompanionName = it.ifBlank { "Ocean" } } }
+        scope.launch { preferences.proactiveBannerMaxChars.collect { currentProactiveBannerMaxChars = it } }
         if (Settings.canDrawOverlays(this)) showBubble()
         startAutoSpeechScheduler()
     }
@@ -587,13 +589,15 @@ class FloatingService : Service() {
         if (!::windowManager.isInitialized || message.isBlank()) return
         clearProactiveBanner(import = false)
         pendingProactiveLine = message
+        val maxChars = currentProactiveBannerMaxChars
+        val unlimited = maxChars <= 0
 
         val text = TextView(this).apply {
             this.text = message
             textSize = 15f
             setTextColor(Color.WHITE)
             setPadding(28, 18, 28, 18)
-            maxLines = 3
+            if (!unlimited) maxLines = 3
             background = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(Color.argb(230, 16, 28, 45), Color.argb(218, 25, 124, 150), Color.argb(205, 105, 115, 224))
@@ -613,7 +617,8 @@ class FloatingService : Service() {
             }
         }
 
-        val width = (resources.displayMetrics.widthPixels * 0.72f).toInt().coerceAtLeast(360)
+        val widthRatio = if (unlimited) 0.82f else 0.72f
+        val width = (resources.displayMetrics.widthPixels * widthRatio).toInt().coerceAtLeast(360)
         val params = WindowManager.LayoutParams(
             width,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -708,7 +713,14 @@ class FloatingService : Service() {
         val appLabel = currentAppLabel(currentPackage)
         val source = SharedScreenContext.source.ifBlank { "unknown" }
         val appName = appLabel.ifBlank { currentPackage.ifBlank { "\u5f53\u524d\u684c\u9762" } }
-        val localFallback = "$name\uff1a$user\uff0c$appName \u8fd9\u8fb9\u6211\u770b\u7740\u4e86\u3002\u6709\u660e\u786e\u6587\u672c\u65f6\u6211\u4f1a\u53ea\u6311\u5173\u952e\u5904\u63d0\u9192\uff0c\u4e0d\u4f1a\u4e71\u63d2\u8bdd\u3002"
+        val maxChars = preferences.proactiveBannerMaxChars.first()
+        val localFallback = fitProactiveLength(
+            "$name\uff1a$user\uff0c$appName \u8fd9\u8fb9\u6211\u770b\u7740\u4e86\u3002\u6709\u660e\u786e\u6587\u672c\u65f6\u6211\u4f1a\u53ea\u6311\u5173\u952e\u5904\u63d0\u9192\uff0c\u4e0d\u4f1a\u4e71\u63d2\u8bdd\u3002",
+            maxChars,
+            name,
+            user,
+            appName
+        )
         if (preferences.resolvedApiProfiles().none { it.isUsable() }) return localFallback
         return try {
             val request = promptEngine.buildProactiveCompanionPrompt(
@@ -717,13 +729,25 @@ class FloatingService : Service() {
                 memory = memoryText,
                 operationHistory = proactiveHistoryText(),
                 triggerApps = triggerApps,
-                currentPackage = currentPackage
+                currentPackage = currentPackage,
+                maxChars = maxChars
             )
             val response = FallbackAIClient(preferences).complete(request)
-            response.text.ifBlank { localFallback }.withCompanionName(name)
+            fitProactiveLength(response.text.ifBlank { localFallback }.withCompanionName(name), maxChars, name, user, appName)
         } catch (_: Exception) {
             localFallback
         }
+    }
+
+    private fun fitProactiveLength(message: String, maxChars: Int, name: String, user: String, appName: String): String {
+        if (maxChars <= 0 || message.length <= maxChars) return message
+        val prefix = "$name\uff1a"
+        val candidates = listOf(
+            "$prefix$user\uff0c$appName \u6709\u65b0\u52a8\u9759\uff0c\u6211\u53ea\u6311\u91cd\u70b9\u63d0\u9192\u4f60\u3002",
+            "$prefix$appName \u8fd9\u91cc\u6211\u770b\u5230\u4e86\uff0c\u5148\u4e0d\u6253\u65ad\u4f60\u3002",
+            "$prefix\u5df2\u7ed3\u5408\u5f53\u524d\u753b\u9762\u3002"
+        )
+        return candidates.firstOrNull { it.length <= maxChars } ?: prefix.take(maxChars.coerceAtLeast(1))
     }
 
     private suspend fun generateManualReply(userText: String): String {

@@ -46,8 +46,14 @@ class PromptEngine {
         memory: String,
         operationHistory: String,
         triggerApps: String,
-        currentPackage: String
+        currentPackage: String,
+        maxChars: Int
     ): AIRequest {
+        val lengthRule = if (maxChars > 0) {
+            "必须在 ${maxChars} 个中文字符以内完成表达，句子要完整，不要用省略号补尾，不要输出超过限制的内容。"
+        } else {
+            "弹幕长度不受限制，可以完整输出你认为必要的内容，但仍应保持自然、不啰嗦。"
+        }
         val prompt = """
             \u4f60\u662f Ocean Companion\uff0c\u4e00\u4e2a\u684c\u9762\u4f34\u968f\u5f0f AI Agent\u3002
             \u8fd9\u4e0d\u662f\u804a\u5929\u56de\u590d\uff0c\u800c\u662f\u4e00\u6761\u77ed\u6682\u51fa\u73b0\u7684\u684c\u9762\u5f39\u5e55\u3002
@@ -61,6 +67,7 @@ class PromptEngine {
             5. \u5fc5\u987b\u751f\u6210\u4e00\u53e5\u65b0\u7684\u4e3b\u52a8\u53d1\u8a00\uff0c\u4e0d\u8981\u628a\u5b83\u5199\u6210\u5bf9\u65e7\u5bf9\u8bdd\u7684\u56de\u590d\u3002
             6. \u53ea\u8f93\u51fa\u4e00\u5230\u4e24\u53e5\uff0c\u9002\u5408\u5c4f\u5e55\u5f39\u5e55\u9605\u8bfb\uff0c\u4e0d\u8981\u5199\u6807\u9898\u3001\u5217\u8868\u6216\u7cfb\u7edf\u89e3\u91ca\u3002
             7. \u8bed\u6c14\u5fc5\u987b\u9075\u5faa\u4eba\u683c\u8bf4\u660e\u3002
+            8. $lengthRule
 
             \u4eba\u683c\u8bf4\u660e\uff1a
             $customPersona

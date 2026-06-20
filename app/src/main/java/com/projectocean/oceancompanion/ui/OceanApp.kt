@@ -214,6 +214,7 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     val triggerApps by store.triggerAppNames.collectAsState("")
     val panelRatio by store.panelRatio.collectAsState(0.5f)
     val proactive by store.proactiveReminders.collectAsState(true)
+    val proactiveBannerMaxChars by store.proactiveBannerMaxChars.collectAsState(60)
     val installedApps = remember { loadInstalledApps(context).take(18) }
 
     var apiProfilesDraft by remember { mutableStateOf(emptyList<ApiProfile>()) }
@@ -225,6 +226,7 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     var triggerAppsDraft by remember { mutableStateOf(triggerApps) }
     var panelRatioDraft by remember { mutableStateOf(panelRatio) }
     var proactiveDraft by remember { mutableStateOf(proactive) }
+    var proactiveBannerMaxCharsDraft by remember { mutableStateOf(proactiveBannerMaxChars) }
     var savedNotice by remember { mutableStateOf("") }
     var draftsLoaded by remember { mutableStateOf(false) }
     var apiExpanded by remember { mutableStateOf(true) }
@@ -233,7 +235,7 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     var explainExpanded by remember { mutableStateOf(false) }
     var selectionHint by remember { mutableStateOf<SelectionHint?>(null) }
 
-    LaunchedEffect(profiles, provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive) {
+    LaunchedEffect(profiles, provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive, proactiveBannerMaxChars) {
         if (draftsLoaded) return@LaunchedEffect
         apiProfilesDraft = profiles.ifEmpty {
             listOf(ApiProfile(label = provider.ifBlank { "OpenAI" }, provider = provider, baseUrl = apiBaseUrl, apiKey = apiKey, model = modelName))
@@ -246,6 +248,7 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
         triggerAppsDraft = triggerApps
         panelRatioDraft = panelRatio
         proactiveDraft = proactive
+        proactiveBannerMaxCharsDraft = proactiveBannerMaxChars
         draftsLoaded = true
     }
 
@@ -337,6 +340,24 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                         Switch(checked = proactiveDraft, onCheckedChange = { proactiveDraft = it })
                     }
                     MutedText("\u8fdb\u5165\u547d\u4e2d\u5e94\u7528\u4f1a\u7acb\u5373\u89e6\u53d1\uff0c\u4e0d\u53d7\u4e0b\u65b9\u65e5\u5e38\u95f4\u9694\u9650\u5236\u3002", small = true)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("\u9650\u5236\u5f39\u5e55\u5b57\u6570", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                        Switch(
+                            checked = proactiveBannerMaxCharsDraft > 0,
+                            onCheckedChange = { checked -> proactiveBannerMaxCharsDraft = if (checked) 60 else 0 }
+                        )
+                    }
+                    if (proactiveBannerMaxCharsDraft > 0) {
+                        Text("\u5f39\u5e55\u6700\u5927\u957f\u5ea6\uff1a${proactiveBannerMaxCharsDraft.coerceIn(20, 200)} \u5b57")
+                        Slider(
+                            value = proactiveBannerMaxCharsDraft.coerceIn(20, 200).toFloat(),
+                            onValueChange = { proactiveBannerMaxCharsDraft = it.toInt().coerceIn(20, 200) },
+                            valueRange = 20f..200f
+                        )
+                        MutedText("\u9650\u5236\u65f6 Ocean \u4f1a\u8981\u6c42 AI \u76f4\u63a5\u751f\u6210\u7b26\u5408\u957f\u5ea6\u7684\u5b8c\u6574\u77ed\u53e5\uff0c\u907f\u514d\u786c\u622a\u65ad\u3002", small = true)
+                    } else {
+                        MutedText("\u5f53\u524d\u4e3a\u4e0d\u9650\u5236\uff1a\u4e3b\u52a8\u5f39\u5e55\u4f1a\u5b8c\u6574\u663e\u793a AI \u8f93\u51fa\uff0c\u4e0d\u4f1a\u622a\u65ad\u3002", small = true)
+                    }
                     Text("\u53d1\u8a00\u95f4\u9694\uff1a${speechIntervalDraft} \u5206\u949f")
                     Slider(value = speechIntervalDraft.toFloat(), onValueChange = { speechIntervalDraft = it.toInt().coerceIn(1, 120) }, valueRange = 1f..120f)
                     Text("\u4f34\u968f\u9762\u677f\u5360\u5c4f\u6bd4\u4f8b\uff1a${(panelRatioDraft * 100).toInt()}%")
@@ -376,6 +397,7 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                                 speechIntervalMinutes = speechIntervalDraft.coerceIn(1, 120),
                                 panelRatio = panelRatioDraft.coerceIn(0.35f, 0.8f),
                                 proactiveReminders = proactiveDraft,
+                                proactiveBannerMaxChars = if (proactiveBannerMaxCharsDraft <= 0) 0 else proactiveBannerMaxCharsDraft.coerceIn(20, 200),
                                 apiProfiles = cleanedProfiles
                             )
                             apiProfilesDraft = cleanedProfiles

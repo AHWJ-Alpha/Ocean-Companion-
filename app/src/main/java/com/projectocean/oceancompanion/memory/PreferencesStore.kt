@@ -28,6 +28,7 @@ class PreferencesStore(private val context: Context) {
     val triggerAppNames = context.dataStore.data.map { it[Keys.TriggerAppNames] ?: "" }
     val panelRatio = context.dataStore.data.map { it[Keys.PanelRatio] ?: 0.5f }
     val proactiveReminders = context.dataStore.data.map { it[Keys.ProactiveReminders] ?: true }
+    val proactiveBannerMaxChars = context.dataStore.data.map { it[Keys.ProactiveBannerMaxChars] ?: 60 }
     val apiProfilesJson = context.dataStore.data.map { it[Keys.ApiProfilesJson] ?: "" }
     val apiProfiles = context.dataStore.data.map { prefs ->
         val saved = ApiProfile.decode(prefs[Keys.ApiProfilesJson].orEmpty())
@@ -60,6 +61,7 @@ class PreferencesStore(private val context: Context) {
     suspend fun setTriggerAppNames(value: String) = context.dataStore.edit { it[Keys.TriggerAppNames] = value }
     suspend fun setPanelRatio(value: Float) = context.dataStore.edit { it[Keys.PanelRatio] = value }
     suspend fun setProactiveReminders(value: Boolean) = context.dataStore.edit { it[Keys.ProactiveReminders] = value }
+    suspend fun setProactiveBannerMaxChars(value: Int) = context.dataStore.edit { it[Keys.ProactiveBannerMaxChars] = value }
     suspend fun setApiProfiles(value: List<ApiProfile>) = context.dataStore.edit { it[Keys.ApiProfilesJson] = ApiProfile.encode(value) }
 
     suspend fun resolvedApiProfiles(): List<ApiProfile> = apiProfiles.first()
@@ -76,7 +78,8 @@ class PreferencesStore(private val context: Context) {
         triggerAppNames: String,
         speechIntervalMinutes: Int,
         panelRatio: Float,
-        proactiveReminders: Boolean
+        proactiveReminders: Boolean,
+        proactiveBannerMaxChars: Int = 60
     ) = saveSettings(
         provider = provider,
         apiBaseUrl = apiBaseUrl,
@@ -90,6 +93,7 @@ class PreferencesStore(private val context: Context) {
         speechIntervalMinutes = speechIntervalMinutes,
         panelRatio = panelRatio,
         proactiveReminders = proactiveReminders,
+        proactiveBannerMaxChars = proactiveBannerMaxChars,
         apiProfiles = listOf(
             ApiProfile(
                 label = provider.ifBlank { "OpenAI" },
@@ -114,6 +118,7 @@ class PreferencesStore(private val context: Context) {
         speechIntervalMinutes: Int,
         panelRatio: Float,
         proactiveReminders: Boolean,
+        proactiveBannerMaxChars: Int = 60,
         apiProfiles: List<ApiProfile>
     ) = context.dataStore.edit {
         it[Keys.Provider] = provider
@@ -129,6 +134,7 @@ class PreferencesStore(private val context: Context) {
         it[Keys.SpeechIntervalMinutes] = speechIntervalMinutes
         it[Keys.PanelRatio] = panelRatio
         it[Keys.ProactiveReminders] = proactiveReminders
+        it[Keys.ProactiveBannerMaxChars] = proactiveBannerMaxChars
     }
 
     private object Keys {
@@ -146,6 +152,7 @@ class PreferencesStore(private val context: Context) {
         val TriggerAppNames = stringPreferencesKey("trigger_app_names")
         val PanelRatio = floatPreferencesKey("panel_ratio")
         val ProactiveReminders = booleanPreferencesKey("proactive_reminders")
+        val ProactiveBannerMaxChars = intPreferencesKey("proactive_banner_max_chars")
         val ApiProfilesJson = stringPreferencesKey("api_profiles_json")
     }
 }
