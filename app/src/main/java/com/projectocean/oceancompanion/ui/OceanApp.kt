@@ -231,6 +231,7 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     var personaExpanded by remember { mutableStateOf(true) }
     var behaviorExpanded by remember { mutableStateOf(true) }
     var explainExpanded by remember { mutableStateOf(false) }
+    var selectionHint by remember { mutableStateOf<SelectionHint?>(null) }
 
     LaunchedEffect(profiles, provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive) {
         if (draftsLoaded) return@LaunchedEffect
@@ -262,10 +263,18 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
         item {
             ExpandableSection("AI API \u4e0e\u8bc6\u56fe\u6a21\u578b", apiExpanded, { apiExpanded = !apiExpanded }) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    selectionHint?.let { SelectionHintCard(it) }
                     providerPresets.chunked(2).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             row.forEach { preset ->
-                                OutlinedButton(onClick = { apiProfilesDraft = apiProfilesDraft + preset.toApiProfile(); apiExpanded = true }, modifier = Modifier.weight(1f)) {
+                                OutlinedButton(onClick = {
+                                    apiProfilesDraft = apiProfilesDraft + preset.toApiProfile()
+                                    apiExpanded = true
+                                    selectionHint = SelectionHint(
+                                        preset.label,
+                                        "\u5df2\u6dfb\u52a0 ${preset.label}\uff1a\u9ed8\u8ba4\u5730\u5740\u4e3a ${preset.baseUrl}\uff0c\u6a21\u578b\u4e3a ${preset.model}\u3002API Key \u4ecd\u9700\u4f60\u81ea\u5df1\u586b\u5199\u3002"
+                                    )
+                                }, modifier = Modifier.weight(1f)) {
                                     Icon(Icons.Outlined.Add, contentDescription = null)
                                     Spacer(Modifier.width(6.dp))
                                     Text(preset.label, maxLines = 1)
@@ -280,7 +289,15 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                             index = index,
                             profile = profile,
                             total = apiProfilesDraft.size,
-                            onChange = { changed -> apiProfilesDraft = apiProfilesDraft.toMutableList().also { it[index] = changed } },
+                            onChange = { changed ->
+                                apiProfilesDraft = apiProfilesDraft.toMutableList().also { it[index] = changed }
+                                if (changed.supportsVision != profile.supportsVision) {
+                                    selectionHint = SelectionHint(
+                                        "\u8bc6\u56fe\u6a21\u578b",
+                                        if (changed.supportsVision) "${changed.label}\u5df2\u6807\u8bb0\u4e3a\u622a\u56fe\u5206\u6790\u4f18\u5148\u4f7f\u7528\u7684\u6a21\u578b\u3002\u8bf7\u786e\u8ba4\u8be5\u6a21\u578b\u652f\u6301\u56fe\u50cf\u8f93\u5165\u3002" else "${changed.label}\u5df2\u4e0d\u518d\u4f5c\u4e3a\u8bc6\u56fe\u4f18\u5148\u6a21\u578b\uff0c\u622a\u56fe\u5206\u6790\u4f1a\u5c1d\u8bd5\u5176\u4ed6\u53ef\u7528\u914d\u7f6e\u3002"
+                                    )
+                                }
+                            },
                             onMoveUp = { if (index > 0) apiProfilesDraft = apiProfilesDraft.toMutableList().also { java.util.Collections.swap(it, index, index - 1) } },
                             onMoveDown = { if (index < apiProfilesDraft.lastIndex) apiProfilesDraft = apiProfilesDraft.toMutableList().also { java.util.Collections.swap(it, index, index + 1) } },
                             onDelete = { apiProfilesDraft = apiProfilesDraft.filterIndexed { i, _ -> i != index } }
@@ -298,7 +315,12 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                     IconTextButton("\u4e0a\u4f20\u5e76\u88c1\u5207\u56fe\u6807", Icons.Outlined.Image, onPickIconImage, Modifier.fillMaxWidth())
                     personaPresets.chunked(2).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            row.forEach { preset -> OutlinedButton(onClick = { personaPromptDraft = preset.prompt }, modifier = Modifier.weight(1f)) { Text(preset.label, maxLines = 1) } }
+                            row.forEach { preset ->
+                                OutlinedButton(onClick = {
+                                    personaPromptDraft = preset.prompt
+                                    selectionHint = SelectionHint(preset.label, "\u5df2\u5957\u7528 ${preset.label}\uff1a\u4e0b\u6b21\u957f\u5bf9\u8bdd\u548c\u4e3b\u52a8\u53d1\u8a00\u4f1a\u6309\u8fd9\u4e2a\u98ce\u683c\u751f\u6210\u3002")
+                                }, modifier = Modifier.weight(1f)) { Text(preset.label, maxLines = 1) }
+                            }
                             if (row.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
@@ -322,7 +344,12 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                     MutedText("\u5e94\u7528\u5feb\u901f\u9009\u62e9", small = true)
                     installedApps.chunked(2).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            row.forEach { app -> OutlinedButton(onClick = { triggerAppsDraft = listOf(triggerAppsDraft, app.label).filter { it.isNotBlank() }.joinToString(",") }, modifier = Modifier.weight(1f)) { Text(app.label, maxLines = 1) } }
+                            row.forEach { app ->
+                                OutlinedButton(onClick = {
+                                    triggerAppsDraft = listOf(triggerAppsDraft, app.label).filter { it.isNotBlank() }.joinToString(",")
+                                    selectionHint = SelectionHint(app.label, "\u5df2\u5c06 ${app.label} \u52a0\u5165\u81ea\u52a8\u89e6\u53d1\u5173\u952e\u8bcd\uff1a\u8fdb\u5165\u547d\u4e2d\u5e94\u7528\u65f6\u4f1a\u7acb\u5373\u751f\u6210\u4e00\u6761\u72ec\u7acb\u5f39\u5e55\u3002")
+                                }, modifier = Modifier.weight(1f)) { Text(app.label, maxLines = 1) }
+                            }
                             if (row.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
@@ -391,6 +418,8 @@ private data class InstalledApp(val label: String, val packageName: String)
 private data class ProviderPreset(val label: String, val provider: String, val baseUrl: String, val model: String)
 
 private data class PersonaPreset(val label: String, val prompt: String)
+
+private data class SelectionHint(val title: String, val body: String)
 
 @Composable
 private fun OceanCard(content: @Composable () -> Unit) {
@@ -478,6 +507,16 @@ private fun ApiProfileEditor(
                 Text("\u7528\u4e8e\u622a\u56fe\u8bc6\u56fe", modifier = Modifier.weight(1f))
                 Switch(checked = profile.supportsVision, onCheckedChange = { onChange(profile.copy(supportsVision = it)) })
             }
+        }
+    }
+}
+
+@Composable
+private fun SelectionHintCard(hint: SelectionHint) {
+    Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.62f)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(hint.title, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            Text(hint.body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
         }
     }
 }

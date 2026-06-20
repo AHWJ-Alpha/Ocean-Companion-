@@ -64,7 +64,10 @@ class FloatingService : Service() {
     private var bubble: View? = null
     private var companionPanel: View? = null
     private var proactiveBanner: View? = null
+    private var proactiveBannerParams: WindowManager.LayoutParams? = null
     private var pendingProactiveLine: String? = null
+    private var bubbleX = 28
+    private var bubbleY = 220
     private var schedulerJob: Job? = null
     private var lastTap = 0L
     private var lastTriggeredPackage = ""
@@ -127,8 +130,8 @@ class FloatingService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 28
-            y = 220
+            x = bubbleX
+            y = bubbleY
         }
 
         val labelView = TextView(this).apply {
@@ -200,7 +203,10 @@ class FloatingService : Service() {
                     if (dragging) {
                         params.x = startX + dx.toInt()
                         params.y = startY + dy.toInt()
+                        bubbleX = params.x
+                        bubbleY = params.y
                         windowManager.updateViewLayout(view, params)
+                        updateProactiveBannerPosition()
                     }
                     true
                 }
@@ -250,7 +256,7 @@ class FloatingService : Service() {
             }.start()
             return
         }
-        scope.launch { showCompanionPanel() }
+        scope.launch { showCompanionPanel(importProactive = false) }
     }
 
     private suspend fun showCompanionPanel(importProactive: Boolean = true) {
@@ -607,7 +613,7 @@ class FloatingService : Service() {
             }
         }
 
-        val width = (resources.displayMetrics.widthPixels * 0.88f).toInt()
+        val width = (resources.displayMetrics.widthPixels * 0.72f).toInt().coerceAtLeast(360)
         val params = WindowManager.LayoutParams(
             width,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -615,11 +621,13 @@ class FloatingService : Service() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = 72
+            gravity = Gravity.TOP or Gravity.START
+            x = bannerX(width)
+            y = bannerY()
         }
 
         proactiveBanner = text
+        proactiveBannerParams = params
         runCatching { windowManager.addView(text, params) }
             .onSuccess {
                 text.animate()
@@ -636,8 +644,28 @@ class FloatingService : Service() {
             }
             .onFailure {
                 proactiveBanner = null
+                proactiveBannerParams = null
                 pendingProactiveLine = null
             }
+    }
+
+    private fun updateProactiveBannerPosition() {
+        val banner = proactiveBanner ?: return
+        val params = proactiveBannerParams ?: return
+        params.x = bannerX(params.width)
+        params.y = bannerY()
+        runCatching { windowManager.updateViewLayout(banner, params) }
+    }
+
+    private fun bannerX(width: Int): Int {
+        val screenWidth = resources.displayMetrics.widthPixels
+        val desired = bubbleX + 96
+        return desired.coerceIn(12, (screenWidth - width - 12).coerceAtLeast(12))
+    }
+
+    private fun bannerY(): Int {
+        val screenHeight = resources.displayMetrics.heightPixels
+        return (bubbleY + 8).coerceIn(32, (screenHeight - 220).coerceAtLeast(32))
     }
 
     private fun importVisibleProactiveLine() {
@@ -658,6 +686,7 @@ class FloatingService : Service() {
         pendingProactiveLine = null
         val banner = proactiveBanner ?: return
         proactiveBanner = null
+        proactiveBannerParams = null
         banner.animate()
             .alpha(0f)
             .translationY(-36f)
