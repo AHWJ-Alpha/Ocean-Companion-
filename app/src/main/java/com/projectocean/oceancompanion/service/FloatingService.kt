@@ -13,6 +13,12 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
 import android.provider.Settings
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.StyleSpan
+import android.text.style.RelativeSizeSpan
+import android.text.style.TypefaceSpan
+import android.text.style.ForegroundColorSpan
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.view.Gravity
@@ -20,6 +26,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.graphics.Typeface
 import android.widget.Button as AndroidButton
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -742,7 +749,7 @@ class FloatingService : Service() {
         val isUser = message.startsWith("${userName()}\uff1a")
         val isThinking = message.endsWith("\uff1a\u6b63\u5728\u601d\u8003...")
         val text = TextView(this).apply {
-            this.text = message
+            this.text = if (isUser || isThinking) message else renderBasicMarkdown(message, theme)
             textSize = if (isThinking) 13f else 15f
             maxWidth = if (isPortrait()) {
                 (resources.displayMetrics.widthPixels * 0.78f).toInt()
@@ -757,6 +764,7 @@ class FloatingService : Service() {
                 }
             )
             setPadding(18, 14, 18, 14)
+            setLineSpacing(2f, 1.08f)
             background = GradientDrawable().apply {
                 cornerRadius = 22f
                 if (isUser) {
@@ -781,6 +789,79 @@ class FloatingService : Service() {
             ))
         }
         return row
+    }
+
+    private fun renderBasicMarkdown(markdown: String, theme: CompanionTheme): CharSequence {
+        val normalized = markdown.replace("\r\n", "\n")
+        val builder = SpannableStringBuilder()
+        var inCodeBlock = false
+        normalized.lines().forEachIndexed { index, rawLine ->
+            val line = rawLine.trimEnd()
+            if (line.trim().startsWith("```")) {
+                inCodeBlock = !inCodeBlock
+                return@forEachIndexed
+            }
+            if (index > 0 && builder.isNotEmpty()) builder.append('\n')
+            val start = builder.length
+            val displayLine = when {
+                inCodeBlock -> line
+                line.startsWith("### ") -> line.removePrefix("### ")
+                line.startsWith("## ") -> line.removePrefix("## ")
+                line.startsWith("# ") -> line.removePrefix("# ")
+                line.trimStart().startsWith("- ") -> "• ${line.trimStart().removePrefix("- ")}"
+                line.trimStart().matches(Regex("\\d+\\.\\s+.*")) -> line.trimStart()
+                else -> line
+            }
+            builder.append(displayLine)
+            val end = builder.length
+            when {
+                inCodeBlock -> {
+                    builder.setSpan(TypefaceSpan("monospace"), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    builder.setSpan(ForegroundColorSpan(theme.textSecondary), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                line.startsWith("# ") -> {
+                    builder.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    builder.setSpan(RelativeSizeSpan(1.18f), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                line.startsWith("## ") || line.startsWith("### ") -> {
+                    builder.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    builder.setSpan(RelativeSizeSpan(1.08f), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+            }
+        }
+        applyInlineMarkdown(builder, theme)
+        return builder
+    }
+
+    private fun applyInlineMarkdown(builder: SpannableStringBuilder, theme: CompanionTheme) {
+        applyPairedMarker(builder, "**") { start, end ->
+            builder.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        applyPairedMarker(builder, "*") { start, end ->
+            builder.setSpan(StyleSpan(Typeface.ITALIC), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        applyPairedMarker(builder, "`") { start, end ->
+            builder.setSpan(TypefaceSpan("monospace"), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            builder.setSpan(ForegroundColorSpan(theme.primary), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+    }
+
+    private fun applyPairedMarker(
+        builder: SpannableStringBuilder,
+        marker: String,
+        applySpan: (Int, Int) -> Unit
+    ) {
+        var searchFrom = 0
+        while (searchFrom < builder.length) {
+            val open = builder.indexOf(marker, searchFrom)
+            if (open < 0) break
+            val close = builder.indexOf(marker, open + marker.length)
+            if (close < 0) break
+            builder.delete(close, close + marker.length)
+            builder.delete(open, open + marker.length)
+            applySpan(open, close - marker.length)
+            searchFrom = close - marker.length
+        }
     }
 
     private fun conversationText(): String {

@@ -8,6 +8,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.util.concurrent.TimeUnit
 
 class CustomAIClient(
@@ -43,17 +44,49 @@ class CustomAIClient(
                 if (!response.isSuccessful) {
                     return@withContext AIResponse("AI API request failed: ${response.code} ${raw.take(500)}", "custom")
                 }
-                val content = JSONObject(raw)
-                    .optJSONArray("choices")
-                    ?.optJSONObject(0)
-                    ?.optJSONObject("message")
-                    ?.optString("content")
-                    .orEmpty()
-                    .trim()
-                AIResponse(content.ifBlank { "AI API returned an empty message." }, "custom")
+                val content = extractResponseText(raw)
+                AIResponse(content.ifBlank { "AI API did not return readable text. Raw response: ${raw.take(500)}" }, "custom")
             }
         }.getOrElse { error ->
             AIResponse("AI API connection failed: ${error.message ?: error::class.java.simpleName}", "custom")
+        }
+    }
+
+    private fun extractResponseText(raw: String): String {
+        if (raw.isBlank()) return ""
+        val root = JSONTokener(raw).nextValue() as? JSONObject ?: return raw.trim()
+        val choices = root.optJSONArray("choices")
+        if (choices != null && choices.length() > 0) {
+            val first = choices.optJSONObject(0)
+            val message = first?.optJSONObject("message")
+            val messageText = listOfNotNull(
+                message?.readFlexibleText("content"),
+                message?.readFlexibleText("reasoning_content"),
+                first?.optJSONObject("delta")?.readFlexibleText("content"),
+                first?.readFlexibleText("text")
+            ).firstOrNull { it.isNotBlank() }
+            if (!messageText.isNullOrBlank()) return messageText.trim()
+        }
+        return listOf(
+            root.readFlexibleText("output_text"),
+            root.readFlexibleText("text"),
+            root.optJSONObject("message")?.readFlexibleText("content").orEmpty()
+        ).firstOrNull { it.isNotBlank() }.orEmpty().trim()
+    }
+
+    private fun JSONObject.readFlexibleText(key: String): String {
+        if (!has(key) || isNull(key)) return ""
+        return when (val value = opt(key)) {
+            is String -> value
+            is JSONArray -> (0 until value.length()).joinToString("") { index ->
+                when (val item = value.opt(index)) {
+                    is String -> item
+                    is JSONObject -> item.optString("text").ifBlank { item.optString("content") }
+                    else -> ""
+                }
+            }
+            is JSONObject -> value.optString("text").ifBlank { value.optString("content") }
+            else -> value?.toString().orEmpty()
         }
     }
 }
