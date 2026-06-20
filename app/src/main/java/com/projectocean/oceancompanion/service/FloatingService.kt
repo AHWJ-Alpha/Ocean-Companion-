@@ -191,7 +191,7 @@ class FloatingService : Service() {
         scope.launch { showCompanionPanel() }
     }
 
-    private suspend fun showCompanionPanel(announce: Boolean = true) {
+    private suspend fun showCompanionPanel(importProactive: Boolean = true) {
         runCatching {
             val ratio = preferences.panelRatio.first().coerceIn(0.35f, 0.8f)
             val metrics = resources.displayMetrics
@@ -219,8 +219,7 @@ class FloatingService : Service() {
             windowManager.addView(panel, params)
             panel.animate().alpha(1f).translationY(0f).translationX(0f).setDuration(320).setInterpolator(DecelerateInterpolator(1.8f)).start()
             panelVisibleState.value = true
-            importVisibleProactiveLine()
-            if (announce) speak("${companionName()}\uff1a\u957f\u65f6\u4f34\u968f\u5df2\u5f00\u542f\u3002")
+            if (importProactive) importVisibleProactiveLine()
         }.onFailure {
             companionPanel = null
             Toast.makeText(this, "${companionName()}\uff1a\u9762\u677f\u542f\u52a8\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u60ac\u6d6e\u7a97\u6743\u9650\u3002", Toast.LENGTH_LONG).show()
@@ -541,7 +540,7 @@ class FloatingService : Service() {
             importVisibleProactiveLine()
             return
         }
-        scope.launch { showCompanionPanel(announce = false) }
+        scope.launch { showCompanionPanel(importProactive = true) }
     }
 
     private fun clearProactiveBanner(import: Boolean) {
@@ -663,13 +662,37 @@ class FloatingService : Service() {
 
     private fun renderConversationMessages(list: LinearLayout, scroll: ScrollView?, theme: CompanionTheme) {
         list.removeAllViews()
-        val lines = if (conversationLines.isEmpty()) {
-            listOf("${companionName()}\uff1a\u6211\u4f1a\u628a\u5c4f\u5e55\u4e0a\u7684\u91cd\u70b9\u548c ${userName()} \u7684\u504f\u597d\u7559\u5728\u8bb0\u5fc6\u91cc\u3002")
-        } else {
-            conversationLines.toList()
+        if (conversationLines.isEmpty()) {
+            list.addView(emptyConversationHint(theme))
+            return
         }
+        val lines = conversationLines.toList()
         lines.forEach { line -> list.addView(messageBubble(line, theme)) }
         scroll?.post { scroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun emptyConversationHint(theme: CompanionTheme): View {
+        val text = TextView(this).apply {
+            this.text = "\u6682\u65e0\u5bf9\u8bdd\u3002\u4e3b\u52a8\u5f39\u5e55\u663e\u793a\u671f\u95f4\u6253\u5f00\u9762\u677f\u65f6\uff0c\u624d\u4f1a\u5c06\u90a3\u53e5\u8bdd\u5e26\u5165\u3002"
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(theme.textSecondary)
+            setPadding(22, 30, 22, 30)
+            background = GradientDrawable().apply {
+                setColor(theme.softOverlay)
+                cornerRadius = 22f
+                setStroke(1, theme.stroke)
+            }
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(4, 18, 4, 18)
+            addView(text, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
     }
 
     private fun messageBubble(message: String, theme: CompanionTheme): View {
@@ -718,7 +741,7 @@ class FloatingService : Service() {
     }
 
     private fun conversationText(): String {
-        if (conversationLines.isEmpty()) return "${companionName()}\uff1a\u6211\u4f1a\u628a\u5c4f\u5e55\u4e0a\u7684\u91cd\u70b9\u548c ${userName()} \u7684\u504f\u597d\u7559\u5728\u8bb0\u5fc6\u91cc\u3002"
+        if (conversationLines.isEmpty()) return "No previous long conversation."
         return conversationLines.joinToString("\n\n")
     }
 
