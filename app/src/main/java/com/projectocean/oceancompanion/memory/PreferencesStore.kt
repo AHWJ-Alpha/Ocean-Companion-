@@ -7,6 +7,8 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.projectocean.oceancompanion.ai.ApiProfile
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore("ocean_preferences")
@@ -26,6 +28,21 @@ class PreferencesStore(private val context: Context) {
     val triggerAppNames = context.dataStore.data.map { it[Keys.TriggerAppNames] ?: "" }
     val panelRatio = context.dataStore.data.map { it[Keys.PanelRatio] ?: 0.5f }
     val proactiveReminders = context.dataStore.data.map { it[Keys.ProactiveReminders] ?: true }
+    val apiProfilesJson = context.dataStore.data.map { it[Keys.ApiProfilesJson] ?: "" }
+    val apiProfiles = context.dataStore.data.map { prefs ->
+        val saved = ApiProfile.decode(prefs[Keys.ApiProfilesJson].orEmpty())
+        saved.ifEmpty {
+            listOf(
+                ApiProfile(
+                    label = prefs[Keys.Provider]?.ifBlank { "OpenAI" } ?: "OpenAI",
+                    provider = prefs[Keys.Provider] ?: "openai",
+                    baseUrl = prefs[Keys.ApiBaseUrl] ?: "https://api.openai.com/v1",
+                    apiKey = prefs[Keys.ApiKey] ?: "",
+                    model = prefs[Keys.ModelName] ?: "gpt-4o-mini"
+                )
+            )
+        }
+    }
 
     suspend fun setProvider(value: String) {
         context.dataStore.edit { it[Keys.Provider] = value }
@@ -43,6 +60,9 @@ class PreferencesStore(private val context: Context) {
     suspend fun setTriggerAppNames(value: String) = context.dataStore.edit { it[Keys.TriggerAppNames] = value }
     suspend fun setPanelRatio(value: Float) = context.dataStore.edit { it[Keys.PanelRatio] = value }
     suspend fun setProactiveReminders(value: Boolean) = context.dataStore.edit { it[Keys.ProactiveReminders] = value }
+    suspend fun setApiProfiles(value: List<ApiProfile>) = context.dataStore.edit { it[Keys.ApiProfilesJson] = ApiProfile.encode(value) }
+
+    suspend fun resolvedApiProfiles(): List<ApiProfile> = apiProfiles.first()
 
     suspend fun saveSettings(
         provider: String,
@@ -57,11 +77,50 @@ class PreferencesStore(private val context: Context) {
         speechIntervalMinutes: Int,
         panelRatio: Float,
         proactiveReminders: Boolean
+    ) = saveSettings(
+        provider = provider,
+        apiBaseUrl = apiBaseUrl,
+        apiKey = apiKey,
+        modelName = modelName,
+        userName = userName,
+        companionName = companionName,
+        iconText = iconText,
+        customPersonaPrompt = customPersonaPrompt,
+        triggerAppNames = triggerAppNames,
+        speechIntervalMinutes = speechIntervalMinutes,
+        panelRatio = panelRatio,
+        proactiveReminders = proactiveReminders,
+        apiProfiles = listOf(
+            ApiProfile(
+                label = provider.ifBlank { "OpenAI" },
+                provider = provider,
+                baseUrl = apiBaseUrl,
+                apiKey = apiKey,
+                model = modelName
+            )
+        )
+    )
+
+    suspend fun saveSettings(
+        provider: String,
+        apiBaseUrl: String,
+        apiKey: String,
+        modelName: String,
+        userName: String,
+        companionName: String,
+        iconText: String,
+        customPersonaPrompt: String,
+        triggerAppNames: String,
+        speechIntervalMinutes: Int,
+        panelRatio: Float,
+        proactiveReminders: Boolean,
+        apiProfiles: List<ApiProfile>
     ) = context.dataStore.edit {
         it[Keys.Provider] = provider
         it[Keys.ApiBaseUrl] = apiBaseUrl
         it[Keys.ApiKey] = apiKey
         it[Keys.ModelName] = modelName
+        it[Keys.ApiProfilesJson] = ApiProfile.encode(apiProfiles)
         it[Keys.UserName] = userName
         it[Keys.CompanionName] = companionName
         it[Keys.IconText] = iconText
@@ -87,5 +146,6 @@ class PreferencesStore(private val context: Context) {
         val TriggerAppNames = stringPreferencesKey("trigger_app_names")
         val PanelRatio = floatPreferencesKey("panel_ratio")
         val ProactiveReminders = booleanPreferencesKey("proactive_reminders")
+        val ApiProfilesJson = stringPreferencesKey("api_profiles_json")
     }
 }

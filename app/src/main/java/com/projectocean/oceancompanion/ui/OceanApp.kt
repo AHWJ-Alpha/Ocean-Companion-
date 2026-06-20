@@ -1,4 +1,4 @@
-package com.projectocean.oceancompanion.ui
+﻿package com.projectocean.oceancompanion.ui
 
 import android.content.Context
 import android.content.Intent
@@ -23,6 +23,10 @@ import androidx.compose.material.icons.outlined.AccessibilityNew
 import androidx.compose.material.icons.outlined.BubbleChart
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.ScreenshotMonitor
@@ -59,6 +63,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.projectocean.oceancompanion.ai.ApiProfile
 import com.projectocean.oceancompanion.agent.SharedScreenContext
 import com.projectocean.oceancompanion.memory.PreferencesStore
 import kotlinx.coroutines.launch
@@ -159,10 +164,10 @@ private fun CaptureScreen(
     val previewText = contextSnapshot.visibleText.take(700).ifBlank { "\u6682\u672a\u8bfb\u5230\u5c4f\u5e55\u6587\u672c\u3002\u8bf7\u5148\u5f00\u542f\u65e0\u969c\u788d\u670d\u52a1\uff0c\u7136\u540e\u5207\u5230\u9700\u8981\u5206\u6790\u7684\u5e94\u7528\u3002" }
     Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("\u5c4f\u5e55\u7406\u89e3", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        MutedText("\u5148\u5f00\u542f\u65e0\u969c\u788d\u670d\u52a1\u4ee5\u8bfb\u53d6\u53ef\u89c1\u6587\u672c\uff1b\u957f\u65f6\u4f34\u968f\u671f\u95f4\u4f1a\u7ed3\u5408\u8fd9\u4e9b\u4e0a\u4e0b\u6587\u8bf4\u8bdd\u3002")
+        MutedText("\u5148\u5f00\u542f\u65e0\u969c\u788d\u670d\u52a1\u4ee5\u8bfb\u53d6\u53ef\u89c1\u6587\u672c\uff1b\u4e5f\u53ef\u4e00\u952e\u622a\u56fe\u4ea4\u7ed9\u8bc6\u56fe\u6a21\u578b\u5206\u6790\uff0c\u6216\u9009\u62e9\u6587\u4ef6\u52a0\u5165 AI \u4e0a\u4e0b\u6587\u3002")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             IconTextButton("\u65e0\u969c\u788d", Icons.Outlined.AccessibilityNew, onOpenAccessibility, Modifier.weight(1f))
-            IconTextButton("OCR\u6388\u6743", Icons.Outlined.ScreenshotMonitor, onRequestScreenCapture, Modifier.weight(1f))
+            IconTextButton("\u622a\u56fe\u5206\u6790", Icons.Outlined.ScreenshotMonitor, onRequestScreenCapture, Modifier.weight(1f))
             IconTextButton("\u6587\u4ef6", Icons.Outlined.FolderOpen, onPickFile, Modifier.weight(1f))
         }
         OceanCard {
@@ -178,7 +183,7 @@ private fun CaptureScreen(
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
-                MutedText("OCR \u6309\u94ae\u76ee\u524d\u53ea\u68c0\u67e5\u622a\u5c4f\u6388\u6743\uff0c\u8fd8\u6ca1\u6709\u771f\u6b63\u628a\u5c4f\u5e55\u753b\u9762\u6293\u53d6\u6210\u56fe\u5e76\u4ea4\u7ed9 ML Kit OCR\u3002", small = true)
+                MutedText("\u6587\u4ef6\u6309\u94ae\u652f\u6301\u6587\u672c/Markdown/CSV/JSON/XML/\u4ee3\u7801\u6587\u4ef6\u548c\u56fe\u7247 OCR\uff1bPDF/PPT/Word \u9700\u540e\u7eed\u63a5\u5165\u4e13\u95e8\u89e3\u6790\u5668\u3002", small = true)
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -200,6 +205,7 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     val apiBaseUrl by store.apiBaseUrl.collectAsState("")
     val apiKey by store.apiKey.collectAsState("")
     val modelName by store.modelName.collectAsState("")
+    val profiles by store.apiProfiles.collectAsState(emptyList())
     val userName by store.userName.collectAsState("\u4f60")
     val companionName by store.companionName.collectAsState("Ocean")
     val personaPrompt by store.customPersonaPrompt.collectAsState("")
@@ -208,12 +214,9 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     val triggerApps by store.triggerAppNames.collectAsState("")
     val panelRatio by store.panelRatio.collectAsState(0.5f)
     val proactive by store.proactiveReminders.collectAsState(true)
-    val installedApps = remember { loadInstalledApps(context).take(24) }
+    val installedApps = remember { loadInstalledApps(context).take(18) }
 
-    var providerDraft by remember { mutableStateOf(provider) }
-    var apiBaseUrlDraft by remember { mutableStateOf(apiBaseUrl) }
-    var apiKeyDraft by remember { mutableStateOf(apiKey) }
-    var modelNameDraft by remember { mutableStateOf(modelName) }
+    var apiProfilesDraft by remember { mutableStateOf(emptyList<ApiProfile>()) }
     var userNameDraft by remember { mutableStateOf(userName) }
     var companionNameDraft by remember { mutableStateOf(companionName) }
     var personaPromptDraft by remember { mutableStateOf(personaPrompt) }
@@ -224,13 +227,16 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     var proactiveDraft by remember { mutableStateOf(proactive) }
     var savedNotice by remember { mutableStateOf("") }
     var draftsLoaded by remember { mutableStateOf(false) }
+    var apiExpanded by remember { mutableStateOf(true) }
+    var personaExpanded by remember { mutableStateOf(true) }
+    var behaviorExpanded by remember { mutableStateOf(true) }
+    var explainExpanded by remember { mutableStateOf(false) }
 
-    LaunchedEffect(provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive) {
+    LaunchedEffect(profiles, provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive) {
         if (draftsLoaded) return@LaunchedEffect
-        providerDraft = provider
-        apiBaseUrlDraft = apiBaseUrl
-        apiKeyDraft = apiKey
-        modelNameDraft = modelName
+        apiProfilesDraft = profiles.ifEmpty {
+            listOf(ApiProfile(label = provider.ifBlank { "OpenAI" }, provider = provider, baseUrl = apiBaseUrl, apiKey = apiKey, model = modelName))
+        }
         userNameDraft = userName
         companionNameDraft = companionName
         personaPromptDraft = personaPrompt
@@ -248,94 +254,78 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
             OceanCard {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("\u4f7f\u7528\u8bf4\u660e", fontWeight = FontWeight.Bold)
-                    MutedText("\u5148\u586b\u5199 API Base URL\u3001API Key \u548c\u6a21\u578b\u540d\u79f0\uff0c\u518d\u70b9\u51fb\u4e0b\u65b9\u4fdd\u5b58\u8bbe\u7f6e\u3002\u957f\u6309\u60ac\u6d6e\u7403\u5f00\u542f\u957f\u65f6\u4f34\u968f\uff1b\u5355\u51fb\u8be2\u95ee\u5206\u6790\uff0c\u53cc\u51fb\u52a0\u5165\u5feb\u901f\u8bc6\u5c4f\u961f\u5217\u3002")
-                    MutedText("\u5df2\u4fdd\u5b58\u7684\u8bbe\u7f6e\u4f1a\u5728\u4e0b\u4e00\u6b21 AI \u56de\u590d\u3001\u81ea\u52a8\u53d1\u8a00\u6216\u91cd\u542f\u60ac\u6d6e\u670d\u52a1\u65f6\u751f\u6548\u3002", small = true)
+                    MutedText("\u591a API \u6309\u4e0a\u4e0b\u987a\u5e8f\u4f9d\u6b21\u5c1d\u8bd5\uff1b\u524d\u4e00\u4e2a\u65e0\u6cd5\u8fde\u901a\u6216\u8fd4\u56de\u7a7a\u6d88\u606f\u65f6\uff0cOcean \u4f1a\u81ea\u52a8\u5207\u6362\u5230\u540e\u4e00\u4e2a\u3002")
+                    MutedText("\u4e00\u952e\u622a\u56fe\u5206\u6790\u4f1a\u4f18\u5148\u4f7f\u7528\u5df2\u52fe\u9009\u201c\u8bc6\u56fe\u201d\u7684\u914d\u7f6e\u3002", small = true)
                 }
             }
         }
         item {
-            OceanCard {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("AI \u63d0\u4f9b\u5546\u9884\u8bbe", fontWeight = FontWeight.Bold)
+            ExpandableSection("AI API \u4e0e\u8bc6\u56fe\u6a21\u578b", apiExpanded, { apiExpanded = !apiExpanded }) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     providerPresets.chunked(2).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             row.forEach { preset ->
-                                OutlinedButton(onClick = {
-                                    providerDraft = preset.provider
-                                    apiBaseUrlDraft = preset.baseUrl
-                                    modelNameDraft = preset.model
-                                }, modifier = Modifier.weight(1f)) { Text(preset.label, maxLines = 1) }
+                                OutlinedButton(onClick = { apiProfilesDraft = apiProfilesDraft + preset.toApiProfile(); apiExpanded = true }, modifier = Modifier.weight(1f)) {
+                                    Icon(Icons.Outlined.Add, contentDescription = null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(preset.label, maxLines = 1)
+                                }
                             }
                             if (row.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
-                    MutedText("\u9884\u8bbe\u53ea\u586b\u5145 Base URL \u548c\u6a21\u578b\u540d\uff0cAPI Key \u4ecd\u9700\u81ea\u5df1\u586b\u5199\u3002", small = true)
+                    if (apiProfilesDraft.isEmpty()) MutedText("\u6682\u65e0 API \u914d\u7f6e\uff0c\u8bf7\u5148\u70b9\u4e0a\u65b9\u9884\u8bbe\u6dfb\u52a0\u4e00\u4e2a\u3002")
+                    apiProfilesDraft.forEachIndexed { index, profile ->
+                        ApiProfileEditor(
+                            index = index,
+                            profile = profile,
+                            total = apiProfilesDraft.size,
+                            onChange = { changed -> apiProfilesDraft = apiProfilesDraft.toMutableList().also { it[index] = changed } },
+                            onMoveUp = { if (index > 0) apiProfilesDraft = apiProfilesDraft.toMutableList().also { java.util.Collections.swap(it, index, index - 1) } },
+                            onMoveDown = { if (index < apiProfilesDraft.lastIndex) apiProfilesDraft = apiProfilesDraft.toMutableList().also { java.util.Collections.swap(it, index, index + 1) } },
+                            onDelete = { apiProfilesDraft = apiProfilesDraft.filterIndexed { i, _ -> i != index } }
+                        )
+                    }
                 }
             }
         }
-        item { ConfigField("AI \u63d0\u4f9b\u5546", providerDraft) { providerDraft = it } }
-        item { ConfigField("API Base URL", apiBaseUrlDraft) { apiBaseUrlDraft = it } }
-        item { ConfigField("API Key", apiKeyDraft) { apiKeyDraft = it } }
-        item { ConfigField("\u6a21\u578b\u540d\u79f0", modelNameDraft) { modelNameDraft = it } }
-        item { ConfigField("\u7528\u6237\u6635\u79f0", userNameDraft) { userNameDraft = it.take(20) } }
-        item { ConfigField("AI \u4f19\u4f34\u540d\u79f0", companionNameDraft) { companionNameDraft = it.take(20) } }
-        item { ConfigField("\u60ac\u6d6e\u7403\u56fe\u6807\u6587\u5b57", iconTextDraft) { iconTextDraft = it.take(8) } }
         item {
-            OceanCard {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("\u60ac\u6d6e\u667a\u80fd\u4f53\u56fe\u6807", fontWeight = FontWeight.Bold)
-                    MutedText("\u53ef\u9009\u62e9\u672c\u5730\u56fe\u7247\u5e76\u8c03\u7528\u7cfb\u7edf\u88c1\u5207\u4e3a\u6b63\u65b9\u5f62\u56fe\u6807\u3002")
+            ExpandableSection("\u4eba\u683c\u4e0e\u5916\u89c2", personaExpanded, { personaExpanded = !personaExpanded }) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ConfigField("\u7528\u6237\u6635\u79f0", userNameDraft) { userNameDraft = it.take(20) }
+                    ConfigField("AI \u4f19\u4f34\u540d\u79f0", companionNameDraft) { companionNameDraft = it.take(20) }
+                    ConfigField("\u60ac\u6d6e\u7403\u56fe\u6807\u6587\u5b57", iconTextDraft) { iconTextDraft = it.take(8) }
                     IconTextButton("\u4e0a\u4f20\u5e76\u88c1\u5207\u56fe\u6807", Icons.Outlined.Image, onPickIconImage, Modifier.fillMaxWidth())
-                }
-            }
-        }
-        item {
-            OceanCard {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("\u4eba\u683c\u9884\u8bbe", fontWeight = FontWeight.Bold)
                     personaPresets.chunked(2).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            row.forEach { preset ->
-                                OutlinedButton(onClick = { personaPromptDraft = preset.prompt }, modifier = Modifier.weight(1f)) { Text(preset.label, maxLines = 1) }
-                            }
+                            row.forEach { preset -> OutlinedButton(onClick = { personaPromptDraft = preset.prompt }, modifier = Modifier.weight(1f)) { Text(preset.label, maxLines = 1) } }
                             if (row.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
-                }
-            }
-        }
-        item { ConfigField("\u4eba\u683c\u63d0\u793a\u8bcd", personaPromptDraft) { personaPromptDraft = it } }
-        item { ConfigField("\u8f6f\u4ef6\u540d\u81ea\u52a8\u89e6\u53d1\uff08\u9017\u53f7\u5206\u9694\uff09", triggerAppsDraft) { triggerAppsDraft = it } }
-        item {
-            OceanCard {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("\u5e94\u7528\u5feb\u901f\u9009\u62e9", fontWeight = FontWeight.SemiBold)
-                    MutedText("\u70b9\u51fb\u5e94\u7528\u540d\u53ef\u52a0\u5165\u81ea\u52a8\u89e6\u53d1\u5173\u952e\u8bcd\u3002", small = true)
-                    installedApps.chunked(2).forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            row.forEach { app ->
-                                OutlinedButton(onClick = {
-                                    triggerAppsDraft = listOf(triggerAppsDraft, app.label).filter { it.isNotBlank() }.joinToString(",")
-                                }, modifier = Modifier.weight(1f)) { Text(app.label, maxLines = 1) }
-                            }
-                            if (row.size == 1) Spacer(Modifier.weight(1f))
-                        }
-                    }
+                    ConfigField("\u4eba\u683c\u63d0\u793a\u8bcd", personaPromptDraft) { personaPromptDraft = it }
                 }
             }
         }
         item {
-            OceanCard {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ExpandableSection("\u4e3b\u52a8\u53d1\u8a00\u4e0e\u4f34\u968f\u7a97", behaviorExpanded, { behaviorExpanded = !behaviorExpanded }) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ConfigField("\u8f6f\u4ef6\u540d\u81ea\u52a8\u89e6\u53d1\uff08\u9017\u53f7\u5206\u9694\uff09", triggerAppsDraft) { triggerAppsDraft = it }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("\u4e3b\u52a8\u81ea\u52a8\u53d1\u8a00", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                        Text("\u4e3b\u52a8\u81ea\u52a8\u53d1\u8a00", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                         Switch(checked = proactiveDraft, onCheckedChange = { proactiveDraft = it })
                     }
-                    MutedText("\u8fdb\u5165\u547d\u4e2d\u7684\u5e94\u7528\u4f1a\u7acb\u5373\u4e3b\u52a8\u53d1\u8a00\uff1b\u4e0b\u65b9\u95f4\u9694\u53ea\u7528\u4e8e\u65e5\u5e38\u5de1\u68c0\u3002", small = true)
+                    MutedText("\u8fdb\u5165\u547d\u4e2d\u5e94\u7528\u4f1a\u7acb\u5373\u89e6\u53d1\uff0c\u4e0d\u53d7\u4e0b\u65b9\u65e5\u5e38\u95f4\u9694\u9650\u5236\u3002", small = true)
                     Text("\u53d1\u8a00\u95f4\u9694\uff1a${speechIntervalDraft} \u5206\u949f")
                     Slider(value = speechIntervalDraft.toFloat(), onValueChange = { speechIntervalDraft = it.toInt().coerceIn(1, 120) }, valueRange = 1f..120f)
                     Text("\u4f34\u968f\u9762\u677f\u5360\u5c4f\u6bd4\u4f8b\uff1a${(panelRatioDraft * 100).toInt()}%")
                     Slider(value = panelRatioDraft, onValueChange = { panelRatioDraft = it.coerceIn(0.35f, 0.8f) }, valueRange = 0.35f..0.8f)
+                    MutedText("\u5e94\u7528\u5feb\u901f\u9009\u62e9", small = true)
+                    installedApps.chunked(2).forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            row.forEach { app -> OutlinedButton(onClick = { triggerAppsDraft = listOf(triggerAppsDraft, app.label).filter { it.isNotBlank() }.joinToString(",") }, modifier = Modifier.weight(1f)) { Text(app.label, maxLines = 1) } }
+                            if (row.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                    }
                 }
             }
         }
@@ -344,11 +334,13 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = {
                         scope.launch {
+                            val cleanedProfiles = apiProfilesDraft.mapIndexed { index, profile -> profile.copy(label = profile.label.trim().ifBlank { "API ${index + 1}" }, provider = profile.provider.trim().ifBlank { "custom" }, baseUrl = profile.baseUrl.trim(), apiKey = profile.apiKey.trim(), model = profile.model.trim()) }
+                            val primary = cleanedProfiles.firstOrNull() ?: ApiProfile()
                             store.saveSettings(
-                                provider = providerDraft.trim().ifBlank { "openai" },
-                                apiBaseUrl = apiBaseUrlDraft.trim(),
-                                apiKey = apiKeyDraft.trim(),
-                                modelName = modelNameDraft.trim(),
+                                provider = primary.provider,
+                                apiBaseUrl = primary.baseUrl,
+                                apiKey = primary.apiKey,
+                                modelName = primary.model,
                                 userName = userNameDraft.trim().ifBlank { "\u4f60" },
                                 companionName = companionNameDraft.trim().ifBlank { "Ocean" },
                                 iconText = iconTextDraft.trim().ifBlank { "Ocean" }.take(8),
@@ -356,9 +348,12 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                                 triggerAppNames = triggerAppsDraft.trim(),
                                 speechIntervalMinutes = speechIntervalDraft.coerceIn(1, 120),
                                 panelRatio = panelRatioDraft.coerceIn(0.35f, 0.8f),
-                                proactiveReminders = proactiveDraft
+                                proactiveReminders = proactiveDraft,
+                                apiProfiles = cleanedProfiles
                             )
-                            savedNotice = "\u8bbe\u7f6e\u5df2\u4fdd\u5b58"
+                            apiProfilesDraft = cleanedProfiles
+                            savedNotice = "\u8bbe\u7f6e\u5df2\u4fdd\u5b58\uff0c\u7f16\u8f91\u5206\u7ec4\u5df2\u81ea\u52a8\u6536\u8d77"
+                            apiExpanded = false; personaExpanded = false; behaviorExpanded = false
                         }
                     }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Outlined.Save, contentDescription = null)
@@ -376,14 +371,13 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
             }
         }
         item {
-            OceanCard {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("\u76f8\u5173\u8bf4\u660e", fontWeight = FontWeight.Bold)
+            ExpandableSection("\u76f8\u5173\u8bf4\u660e", explainExpanded, { explainExpanded = !explainExpanded }) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(
                         "\u957f\u65f6\u4f34\u968f\uff1a\u7ad6\u5c4f\u4e3a\u4e0b\u534a\u5c4f\uff0c\u6a2a\u5c4f\u4e3a\u53f3\u4fa7\u7a97\uff0c\u53ef\u5728\u4e0a\u65b9\u8c03\u8282\u5360\u5c4f\u6bd4\u4f8b\u3002",
-                        "AI \u5bf9\u8bdd\uff1a\u4f7f\u7528 OpenAI \u517c\u5bb9 /chat/completions \u63a5\u53e3\uff0c\u9700\u8981 Base URL\u3001API Key \u548c\u6a21\u578b\u540d\u79f0\u3002",
-                        "\u957f\u671f\u8bb0\u5fc6\uff1a\u4f34\u968f\u7a97\u5185\u7684\u7528\u6237\u53d1\u8a00\u548c AI \u56de\u590d\u4f1a\u5199\u5165\u672c\u5730\u6570\u636e\u5e93\uff0c\u4e0b\u6b21\u56de\u590d\u4f1a\u5e26\u4e0a\u6700\u8fd1\u8bb0\u5fc6\u3002",
-                        "\u8bc6\u5c4f\uff1a\u65e0\u969c\u788d\u670d\u52a1\u63d0\u4f9b\u5f53\u524d\u9875\u9762\u6587\u672c\u4e0a\u4e0b\u6587\uff0cOCR \u548c\u6587\u4ef6\u9009\u62e9\u4f5c\u4e3a\u540e\u7eed\u5206\u6790\u5165\u53e3\u3002",
+                        "AI \u5bf9\u8bdd\uff1a\u4f7f\u7528 OpenAI \u517c\u5bb9 /chat/completions \u63a5\u53e3\uff0c\u652f\u6301\u591a API \u987a\u5e8f fallback\u3002",
+                        "\u957f\u671f\u8bb0\u5fc6\uff1a\u4f34\u968f\u7a97\u5185\u7684\u7528\u6237\u53d1\u8a00\u548c AI \u56de\u590d\u4f1a\u5199\u5165\u672c\u5730\u6570\u636e\u5e93\u3002",
+                        "\u8bc6\u5c4f\uff1a\u65e0\u969c\u788d\u670d\u52a1\u63d0\u4f9b\u5f53\u524d\u9875\u9762\u6587\u672c\uff1b\u4e00\u952e\u622a\u56fe\u4f1a\u5c1d\u8bd5\u8c03\u7528\u8bc6\u56fe\u6a21\u578b\u5206\u6790\u753b\u9762\u3002",
                         "\u81ea\u52a8\u53d1\u8a00\uff1a\u8fdb\u5165\u547d\u4e2d\u5e94\u7528\u4f1a\u7acb\u5373\u89e6\u53d1\uff0c\u4e0d\u5c55\u5f00\u957f\u5bf9\u8bdd\u9762\u677f\uff1b\u65e5\u5e38\u5de1\u68c0\u624d\u4f7f\u7528\u53d1\u8a00\u95f4\u9694\u3002"
                     ).forEach { line -> MutedText(line) }
                 }
@@ -429,6 +423,72 @@ private fun IconTextButton(
         Text(label, maxLines = 1)
     }
 }
+
+@Composable
+private fun ExpandableSection(
+    title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit
+) {
+    OceanCard {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                OutlinedButton(onClick = onToggle) {
+                    Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (expanded) "\u6536\u8d77" else "\u5c55\u5f00")
+                }
+            }
+            if (expanded) content()
+        }
+    }
+}
+
+@Composable
+private fun ApiProfileEditor(
+    index: Int,
+    profile: ApiProfile,
+    total: Int,
+    onChange: (ApiProfile) -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("#${index + 1}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text(profile.label.ifBlank { profile.provider }, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                OutlinedButton(onClick = onMoveUp, enabled = index > 0) { Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = null) }
+                OutlinedButton(onClick = onMoveDown, enabled = index < total - 1) { Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null) }
+                OutlinedButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, contentDescription = null) }
+            }
+            ConfigField("\u914d\u7f6e\u540d", profile.label) { onChange(profile.copy(label = it)) }
+            ConfigField("\u63d0\u4f9b\u5546", profile.provider) { onChange(profile.copy(provider = it)) }
+            ConfigField("API Base URL", profile.baseUrl) { onChange(profile.copy(baseUrl = it)) }
+            ConfigField("API Key", profile.apiKey) { onChange(profile.copy(apiKey = it)) }
+            ConfigField("\u6a21\u578b\u540d\u79f0", profile.model) { onChange(profile.copy(model = it)) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("\u542f\u7528", modifier = Modifier.weight(1f))
+                Switch(checked = profile.enabled, onCheckedChange = { onChange(profile.copy(enabled = it)) })
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("\u7528\u4e8e\u622a\u56fe\u8bc6\u56fe", modifier = Modifier.weight(1f))
+                Switch(checked = profile.supportsVision, onCheckedChange = { onChange(profile.copy(supportsVision = it)) })
+            }
+        }
+    }
+}
+
+private fun ProviderPreset.toApiProfile(): ApiProfile = ApiProfile(
+    label = label,
+    provider = provider,
+    baseUrl = baseUrl,
+    model = model,
+    supportsVision = provider in setOf("openai", "bailian", "zhipu", "openrouter")
+)
 
 private val providerPresets = listOf(
     ProviderPreset("OpenAI", "openai", "https://api.openai.com/v1", "gpt-4o-mini"),
@@ -491,3 +551,4 @@ private fun formatAge(updatedAt: Long): String {
         else -> "${seconds / 3600}h ago"
     }
 }
+

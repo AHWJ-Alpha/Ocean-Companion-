@@ -1,4 +1,4 @@
-package com.projectocean.oceancompanion.service
+﻿package com.projectocean.oceancompanion.service
 
 import android.app.Service
 import android.app.usage.UsageStatsManager
@@ -26,6 +26,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.graphics.Typeface
 import android.widget.Button as AndroidButton
 import android.widget.EditText
@@ -38,7 +39,7 @@ import android.widget.Toast
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import com.projectocean.oceancompanion.R
-import com.projectocean.oceancompanion.ai.CustomAIClient
+import com.projectocean.oceancompanion.ai.FallbackAIClient
 import com.projectocean.oceancompanion.ai.PromptEngine
 import com.projectocean.oceancompanion.agent.SharedScreenContext
 import com.projectocean.oceancompanion.memory.LongTermMemory
@@ -71,6 +72,7 @@ class FloatingService : Service() {
     private var lastImmediateSpeakAt = 0L
     private var lastRoutineSpeakAt = 0L
     private var panelAnimating = false
+    private var companionPanelParams: WindowManager.LayoutParams? = null
     private var currentUserName = "\u4f60"
     private var currentCompanionName = "Ocean"
     private var currentCompanionTheme = CompanionTheme.default()
@@ -90,6 +92,20 @@ class FloatingService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_FILE_CONTEXT_READY -> {
+                val title = intent.getStringExtra(EXTRA_FILE_TITLE).orEmpty().ifBlank { "\u6587\u4ef6" }
+                val readable = intent.getBooleanExtra(EXTRA_FILE_READABLE, false)
+                val preview = intent.getStringExtra(EXTRA_FILE_PREVIEW).orEmpty()
+                handleFileContextReady(title, readable, preview)
+            }
+            ACTION_SCREEN_ANALYSIS_READY -> {
+                handleScreenAnalysisReady(intent.getStringExtra(EXTRA_SCREEN_ANALYSIS).orEmpty())
+            }
+        }
+        return START_STICKY
+    }
     override fun onDestroy() {
         schedulerJob?.cancel()
         if (::windowManager.isInitialized) {
@@ -229,6 +245,7 @@ class FloatingService : Service() {
             panel.animate().alpha(0f).translationY(if (isPortrait()) 90f else 0f).translationX(if (isPortrait()) 0f else 90f).setDuration(220).withEndAction {
                 runCatching { windowManager.removeView(panel) }
                 companionPanel = null
+                companionPanelParams = null
                 panelAnimating = false
             }.start()
             return
@@ -260,9 +277,13 @@ class FloatingService : Service() {
                 width,
                 height,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                 PixelFormat.TRANSLUCENT
-            ).apply { gravity = panelGravity }
+            ).apply {
+                gravity = panelGravity
+                softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            }
+            companionPanelParams = params
             windowManager.addView(panel, params)
             panel.animate().alpha(1f).translationY(0f).translationX(0f).setDuration(320).setInterpolator(DecelerateInterpolator(1.8f)).withEndAction {
                 panelAnimating = false
@@ -271,9 +292,25 @@ class FloatingService : Service() {
             if (importProactive) importVisibleProactiveLine()
         }.onFailure {
             companionPanel = null
+            companionPanelParams = null
             panelAnimating = false
             Toast.makeText(this, "${companionName()}\uff1a\u9762\u677f\u542f\u52a8\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u60ac\u6d6e\u7a97\u6743\u9650\u3002", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun handleFileContextReady(title: String, readable: Boolean, preview: String) {
+        val line = if (readable) {
+            "${companionName()}：已读取文件《$title》，接下来长对话会自动结合它回答。\n\n预览：\n${preview.take(360)}"
+        } else {
+            "${companionName()}：已接收文件《$title》，但当前版本还不能直接提取正文。\n\n$preview"
+        }
+        appendConversationLine(line, remember = false)
+        if (companionPanel == null) scope.launch { showCompanionPanel(importProactive = false) }
+    }
+
+    private fun handleScreenAnalysisReady(analysis: String) {
+        if (analysis.isBlank()) return
+        showProactiveBanner("${companionName()}\uff1a$analysis")
     }
 
     private fun buildNativeCompanionPanel(portrait: Boolean, theme: CompanionTheme): View {
@@ -353,6 +390,14 @@ class FloatingService : Service() {
                 setStroke(1, theme.primarySoft)
             }
             setPadding(18, 0, 18, 0)
+            setOnFocusChangeListener { view, hasFocus ->
+                updateCompanionPanelFocusable(hasFocus)
+                if (hasFocus) {
+                    view.post {
+                        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+                    }
+                }
+            }
         }
         val send = AndroidButton(this).apply {
             setText("\u2192")
@@ -366,6 +411,7 @@ class FloatingService : Service() {
                 val text = input.text.toString().trim()
                 if (text.isNotBlank()) {
                     input.setText("")
+                    input.clearFocus()
                     appendConversationLine("${userName()}\uff1a$text", remember = true)
                     appendConversationLine("${companionName()}\uff1a\u6b63\u5728\u601d\u8003...", remember = false)
                     scope.launch {
@@ -383,6 +429,19 @@ class FloatingService : Service() {
         container.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         container.addView(inputRow)
         return container
+    }
+
+    private fun updateCompanionPanelFocusable(focusable: Boolean) {
+        val panel = companionPanel ?: return
+        val params = companionPanelParams ?: return
+        val nextFlags = if (focusable) {
+            params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        } else {
+            params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        }
+        if (nextFlags == params.flags) return
+        params.flags = nextFlags
+        runCatching { windowManager.updateViewLayout(panel, params) }
     }
 
     private fun isPortrait(): Boolean = resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE
@@ -619,12 +678,9 @@ class FloatingService : Service() {
         val currentPackage = packageName.ifBlank { SharedScreenContext.packageName }
         val appLabel = currentAppLabel(currentPackage)
         val source = SharedScreenContext.source.ifBlank { "unknown" }
-        val apiKey = preferences.apiKey.first()
-        val baseUrl = preferences.apiBaseUrl.first()
-        val model = preferences.modelName.first()
         val appName = appLabel.ifBlank { currentPackage.ifBlank { "\u5f53\u524d\u684c\u9762" } }
         val localFallback = "$name\uff1a$user\uff0c$appName \u8fd9\u8fb9\u6211\u770b\u7740\u4e86\u3002\u6709\u660e\u786e\u6587\u672c\u65f6\u6211\u4f1a\u53ea\u6311\u5173\u952e\u5904\u63d0\u9192\uff0c\u4e0d\u4f1a\u4e71\u63d2\u8bdd\u3002"
-        if (apiKey.isBlank() || baseUrl.isBlank() || model.isBlank()) return localFallback
+        if (preferences.resolvedApiProfiles().none { it.isUsable() }) return localFallback
         return try {
             val request = promptEngine.buildProactiveCompanionPrompt(
                 screenText = screenText,
@@ -634,7 +690,7 @@ class FloatingService : Service() {
                 triggerApps = triggerApps,
                 currentPackage = currentPackage
             )
-            val response = CustomAIClient(baseUrl, apiKey, model).complete(request)
+            val response = FallbackAIClient(preferences).complete(request)
             response.text.ifBlank { localFallback }.withCompanionName(name)
         } catch (_: Exception) {
             localFallback
@@ -644,14 +700,11 @@ class FloatingService : Service() {
     private suspend fun generateManualReply(userText: String): String {
         val context = SharedScreenContext.visibleText
         val customPersona = preferences.customPersonaPrompt.first()
-        val apiKey = preferences.apiKey.first()
-        val baseUrl = preferences.apiBaseUrl.first()
-        val model = preferences.modelName.first()
         val memoryText = recentMemoryText()
         val name = companionName()
         val user = userName()
-        val fallback = "$name\uff1a\u8fd8\u6ca1\u6709\u914d\u7f6e\u53ef\u7528\u7684 AI API\u3002\u8bf7\u5728\u8bbe\u7f6e\u91cc\u586b\u5199 Base URL\u3001API Key \u548c\u6a21\u578b\u540d\u79f0\uff0c\u7136\u540e\u70b9\u51fb\u4fdd\u5b58\u8bbe\u7f6e\u3002"
-        if (apiKey.isBlank() || baseUrl.isBlank() || model.isBlank()) return fallback
+        val fallback = "$name\uff1a\u8fd8\u6ca1\u6709\u914d\u7f6e\u53ef\u7528\u7684 AI API\u3002\u8bf7\u5728\u8bbe\u7f6e\u91cc\u6dfb\u52a0\u81f3\u5c11\u4e00\u4e2a\u542f\u7528\u7684 API \u914d\u7f6e\uff0c\u5e76\u586b\u5199 Base URL\u3001API Key \u548c\u6a21\u578b\u540d\u79f0\u3002"
+        if (preferences.resolvedApiProfiles().none { it.isUsable() }) return fallback
         return try {
             val request = promptEngine.buildLongConversationPrompt(
                 userText = userText,
@@ -660,7 +713,7 @@ class FloatingService : Service() {
                 memory = memoryText,
                 conversation = conversationText()
             )
-            CustomAIClient(baseUrl, apiKey, model).complete(request).text.ifBlank { fallback }.withCompanionName(name)
+            FallbackAIClient(preferences).complete(request).text.ifBlank { fallback }.withCompanionName(name)
         } catch (_: Exception) {
             "$name\uff1aAI \u8bf7\u6c42\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5 API \u5730\u5740\u3001Key\u3001\u6a21\u578b\u540d\u79f0\u548c\u7f51\u7edc\u8fde\u63a5\u3002"
         }
@@ -944,7 +997,7 @@ class FloatingService : Service() {
         }
     }
 
-    private companion object {
+    companion object {
         const val MESSAGE_LIST_TAG = "ocean_message_list"
         const val SCROLL_VIEW_TAG = "ocean_message_scroll"
         const val ACTIVE_APP_CHECK_INTERVAL_MS = 3_000L
@@ -952,5 +1005,12 @@ class FloatingService : Service() {
         const val PROACTIVE_BANNER_DURATION_MS = 8_000L
         const val SCREEN_CONTEXT_FRESH_MS = 12_000L
         const val USAGE_STATS_LOOKBACK_MS = 30_000L
+        const val ACTION_FILE_CONTEXT_READY = "com.projectocean.oceancompanion.action.FILE_CONTEXT_READY"
+        const val ACTION_SCREEN_ANALYSIS_READY = "com.projectocean.oceancompanion.action.SCREEN_ANALYSIS_READY"
+        const val EXTRA_FILE_TITLE = "file_title"
+        const val EXTRA_FILE_READABLE = "file_readable"
+        const val EXTRA_FILE_PREVIEW = "file_preview"
+        const val EXTRA_SCREEN_ANALYSIS = "screen_analysis"
     }
 }
+

@@ -74,7 +74,7 @@ class MainActivity : ComponentActivity() {
                         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                     },
                     onRequestScreenCapture = { screenCapturePermission.launch(ScreenCapture(this).createCaptureIntent()) },
-                    onPickFile = { filePicker.launch(arrayOf("application/pdf", "text/*", "image/*", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation")) },
+                    onPickFile = { filePicker.launch(arrayOf("text/*", "image/*", "application/json", "application/xml", "application/pdf", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "*/*")) },
                     onPickIconImage = { iconPicker.launch(arrayOf("image/*")) }
                 )
             }

@@ -31,6 +31,25 @@ class CustomAIClient(
             .put("temperature", 0.7)
             .put("stream", false)
 
+        executeChatRequest(body)
+    }
+
+    suspend fun completeVision(prompt: String, imageBase64Png: String): AIResponse = withContext(Dispatchers.IO) {
+        val content = JSONArray()
+            .put(JSONObject().put("type", "text").put("text", prompt))
+            .put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", "data:image/png;base64,$imageBase64Png")))
+        val body = JSONObject()
+            .put("model", model.trim())
+            .put("messages", JSONArray().apply {
+                put(JSONObject().put("role", "user").put("content", content))
+            })
+            .put("temperature", 0.45)
+            .put("stream", false)
+
+        executeChatRequest(body)
+    }
+
+    private fun executeChatRequest(body: JSONObject): AIResponse {
         val httpRequest = Request.Builder()
             .url(baseUrl.trim().trimEnd('/') + "/chat/completions")
             .addHeader("Authorization", "Bearer ${apiKey.trim()}")
@@ -38,11 +57,11 @@ class CustomAIClient(
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
-        runCatching {
+        return runCatching {
             httpClient.newCall(httpRequest).execute().use { response ->
                 val raw = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
-                    return@withContext AIResponse("AI API request failed: ${response.code} ${raw.take(500)}", "custom")
+                    return@use AIResponse("AI API request failed: ${response.code} ${raw.take(500)}", "custom")
                 }
                 val content = extractResponseText(raw)
                 AIResponse(content.ifBlank { "AI API did not return readable text. Raw response: ${raw.take(500)}" }, "custom")
