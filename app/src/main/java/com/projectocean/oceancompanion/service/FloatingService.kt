@@ -76,12 +76,15 @@ class FloatingService : Service() {
     private var lastSeenPackage = ""
     private var lastImmediateSpeakAt = 0L
     private var lastRoutineSpeakAt = 0L
+    private var lastAnyProactiveAt = 0L
+    private var lastProactiveText = ""
     private var panelAnimating = false
     private var companionPanelParams: WindowManager.LayoutParams? = null
     private var currentUserName = "\u4f60"
     private var currentCompanionName = "Ocean"
     private var currentProactiveBannerMaxChars = 60
     private var currentProactiveBannerOffsetDp = 12
+    private var currentProactiveMuteMinutes = 30
     private var currentCompanionOpenGesture = "long_press"
     private var currentCompanionTheme = CompanionTheme.default()
     private var currentSessionId = "session-${System.currentTimeMillis()}"
@@ -98,6 +101,7 @@ class FloatingService : Service() {
         scope.launch { preferences.companionName.collect { currentCompanionName = it.ifBlank { "Ocean" } } }
         scope.launch { preferences.proactiveBannerMaxChars.collect { currentProactiveBannerMaxChars = it } }
         scope.launch { preferences.proactiveBannerOffsetDp.collect { currentProactiveBannerOffsetDp = it.coerceIn(0, 160) } }
+        scope.launch { preferences.proactiveMuteMinutes.collect { currentProactiveMuteMinutes = it.coerceIn(5, 240) } }
         scope.launch { preferences.companionOpenGesture.collect { currentCompanionOpenGesture = it.ifBlank { "long_press" } } }
         if (Settings.canDrawOverlays(this)) showBubble()
         startAutoSpeechScheduler()
@@ -184,6 +188,8 @@ class FloatingService : Service() {
         var longPressTriggered = false
         var longPressJob: Job? = null
         var singleTapJob: Job? = null
+        var tapCount = 0
+        var lastTapAt = 0L
         val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
         view.setOnTouchListener { _, event ->
             when (event.action) {
@@ -235,26 +241,27 @@ class FloatingService : Service() {
                         return@setOnTouchListener true
                     }
                     val now = System.currentTimeMillis()
-                    if (now - lastTap < 320) {
-                        singleTapJob?.cancel()
-                        if (currentCompanionOpenGesture == "double_tap") {
-                            toggleCompanionPanel()
-                        } else {
-                            speak("\u5df2\u52a0\u5165\u5feb\u901f\u8bc6\u5c4f\u5206\u6790\u961f\u5217\u3002")
-                        }
-                    } else {
-                        val gesture = currentCompanionOpenGesture
-                        if (gesture == "single_tap") {
-                            toggleCompanionPanel()
-                        } else if (gesture == "double_tap") {
-                            singleTapJob = scope.launch {
-                                delay(330)
-                                if (currentCompanionOpenGesture == "double_tap") {
-                                    Toast.makeText(this@FloatingService, "${companionName()}\uff1a\u53cc\u51fb\u53ef\u6253\u5f00\u957f\u5bf9\u8bdd\u3002", Toast.LENGTH_SHORT).show()
-                                }
+                    tapCount = if (now - lastTapAt < 360) tapCount + 1 else 1
+                    lastTapAt = now
+                    singleTapJob?.cancel()
+                    if (tapCount >= 3) {
+                        tapCount = 0
+                        hideBubbleWithAnimation(view)
+                        return@setOnTouchListener true
+                    }
+                    singleTapJob = scope.launch {
+                        delay(370)
+                        val count = tapCount
+                        tapCount = 0
+                        if (count == 1) {
+                            rotateBubble(view)
+                            if (currentCompanionOpenGesture == "single_tap") toggleCompanionPanel()
+                        } else if (count == 2) {
+                            if (currentCompanionOpenGesture == "double_tap") {
+                                toggleCompanionPanel()
+                            } else {
+                                Toast.makeText(this@FloatingService, "${companionName()}：双击可在设置里绑定长对话。", Toast.LENGTH_SHORT).show()
                             }
-                        } else {
-                            speak("${companionName()}\uff1a\u8981\u6211\u5206\u6790\u5f53\u524d\u5185\u5bb9\u5417\uff1f")
                         }
                     }
                     lastTap = now
@@ -273,6 +280,29 @@ class FloatingService : Service() {
 
         bubble = view
         windowManager.addView(view, params)
+    }
+
+    private fun rotateBubble(view: View) {
+        view.animate()
+            .rotationBy(360f)
+            .setDuration(720)
+            .setInterpolator(DecelerateInterpolator(1.4f))
+            .start()
+    }
+
+    private fun hideBubbleWithAnimation(view: View) {
+        Toast.makeText(this, "${companionName()}：悬浮球已隐藏，回到应用可重新启动。", Toast.LENGTH_SHORT).show()
+        view.animate()
+            .alpha(0f)
+            .scaleX(0.62f)
+            .scaleY(0.62f)
+            .setDuration(260)
+            .setInterpolator(AccelerateInterpolator(1.5f))
+            .withEndAction {
+                runCatching { windowManager.removeView(view) }
+                if (bubble === view) bubble = null
+            }
+            .start()
     }
 
     private fun toggleCompanionPanel() {
@@ -348,7 +378,7 @@ class FloatingService : Service() {
 
     private fun handleScreenAnalysisReady(analysis: String) {
         if (analysis.isBlank()) return
-        showProactiveBanner("${companionName()}\uff1a$analysis")
+        showProactiveBannerIfFresh("${companionName()}\uff1a$analysis")
     }
 
     private fun buildNativeCompanionPanel(portrait: Boolean, theme: CompanionTheme): View {
@@ -498,28 +528,32 @@ class FloatingService : Service() {
     private suspend fun checkAutoSpeechOnce() = withContext(Dispatchers.Default) {
         val enabled = preferences.proactiveReminders.first()
         if (!enabled) return@withContext
+        val now = System.currentTimeMillis()
+        if (preferences.proactiveMutedUntil.first() > now) return@withContext
         val triggerApps = preferences.triggerAppNames.first().ifBlank { "\u5b66\u4e60,PDF,PPT,Word,Chrome" }
         val currentPackage = resolveCurrentPackage()
-        val now = System.currentTimeMillis()
         val matchedApp = currentPackage.isNotBlank() && matchesTriggerApp(currentPackage, triggerApps)
         val enteredMatchedApp = matchedApp && currentPackage != lastTriggeredPackage
-        val canImmediateSpeak = now - lastImmediateSpeakAt > IMMEDIATE_APP_COOLDOWN_MS
+        val canGlobalSpeak = now - lastAnyProactiveAt > GLOBAL_PROACTIVE_COOLDOWN_MS
+        val canImmediateSpeak = canGlobalSpeak && now - lastImmediateSpeakAt > IMMEDIATE_APP_COOLDOWN_MS
         if (enteredMatchedApp && canImmediateSpeak) {
             lastTriggeredPackage = currentPackage
             lastSeenPackage = currentPackage
             lastImmediateSpeakAt = now
+            lastAnyProactiveAt = now
             val line = generateCompanionLine(triggerApps, reason = "app_enter", packageName = currentPackage)
-            withContext(Dispatchers.Main) { showProactiveBanner(line) }
+            withContext(Dispatchers.Main) { showProactiveBannerIfFresh(line) }
         } else if (currentPackage.isNotBlank()) {
             lastSeenPackage = currentPackage
         }
 
         val minutes = preferences.speechIntervalMinutes.first().coerceIn(1, 120)
         val routineDue = now - lastRoutineSpeakAt >= minutes * 60_000L
-        if (routineDue && currentPackage.isBlank()) {
+        if (routineDue && canGlobalSpeak && currentPackage.isBlank()) {
             lastRoutineSpeakAt = now
+            lastAnyProactiveAt = now
             val line = generateCompanionLine(triggerApps, reason = "routine_check", packageName = currentPackage)
-            withContext(Dispatchers.Main) { showProactiveBanner(line) }
+            withContext(Dispatchers.Main) { showProactiveBannerIfFresh(line) }
         }
 
         if (currentPackage.isBlank() || !matchedApp) {
@@ -636,6 +670,14 @@ class FloatingService : Service() {
         return Color.argb(alpha.coerceIn(0, 255), Color.red(color), Color.green(color), Color.blue(color))
     }
 
+    private fun showProactiveBannerIfFresh(message: String) {
+        val normalized = message.trim().replace(Regex("\\s+"), " ")
+        if (normalized.isBlank()) return
+        if (normalized == lastProactiveText) return
+        lastProactiveText = normalized
+        showProactiveBanner(message)
+    }
+
     private fun showProactiveBanner(message: String) {
         if (!::windowManager.isInitialized || message.isBlank()) return
         clearProactiveBanner(import = false)
@@ -665,7 +707,25 @@ class FloatingService : Service() {
             scaleX = 0.96f
             scaleY = 0.96f
             translationY = -42f
-            setOnClickListener { openCompanionPanelFromProactiveBanner() }
+            var bannerTapCount = 0
+            var bannerLastTapAt = 0L
+            var bannerTapJob: Job? = null
+            setOnClickListener {
+                val now = System.currentTimeMillis()
+                bannerTapCount = if (now - bannerLastTapAt < 360) bannerTapCount + 1 else 1
+                bannerLastTapAt = now
+                bannerTapJob?.cancel()
+                if (bannerTapCount >= 3) {
+                    bannerTapCount = 0
+                    muteProactiveBanners()
+                } else {
+                    bannerTapJob = scope.launch {
+                        delay(370)
+                        if (bannerTapCount == 1) openCompanionPanelFromProactiveBanner()
+                        bannerTapCount = 0
+                    }
+                }
+            }
             setOnLongClickListener {
                 openCompanionPanelFromProactiveBanner()
                 true
@@ -717,6 +777,14 @@ class FloatingService : Service() {
         runCatching { windowManager.updateViewLayout(banner, params) }
     }
 
+    private fun muteProactiveBanners() {
+        val minutes = currentProactiveMuteMinutes.coerceIn(5, 240)
+        val until = System.currentTimeMillis() + minutes * 60_000L
+        scope.launch { preferences.setProactiveMutedUntil(until) }
+        Toast.makeText(this, "${companionName()}：主动弹幕已暂停 $minutes 分钟。", Toast.LENGTH_SHORT).show()
+        clearProactiveBanner(import = false)
+    }
+
     private fun bannerX(width: Int): Int {
         val screenWidth = resources.displayMetrics.widthPixels
         val offset = (currentProactiveBannerOffsetDp * resources.displayMetrics.density).toInt()
@@ -761,7 +829,7 @@ class FloatingService : Service() {
     }
 
     private suspend fun generateCompanionLine(triggerApps: String, reason: String, packageName: String = SharedScreenContext.packageName): String {
-        val screenText = SharedScreenContext.visibleText.ifBlank { "No visible text captured yet." }
+        val screenText = SharedScreenContext.visibleText.ifBlank { "屏幕文字为空或暂不可读。" }
         val memoryText = recentMemoryText()
         val customPersona = preferences.customPersonaPrompt.first()
         val name = companionName()
@@ -771,12 +839,14 @@ class FloatingService : Service() {
         val source = SharedScreenContext.source.ifBlank { "unknown" }
         val appName = appLabel.ifBlank { currentPackage.ifBlank { "\u5f53\u524d\u684c\u9762" } }
         val maxChars = preferences.proactiveBannerMaxChars.first()
+        val hint = screenText.lineSequence().map { it.trim() }.firstOrNull { it.length >= 4 }?.take(18)
         val localFallback = fitProactiveLength(
-            "$name\uff1a$user\uff0c$appName \u8fd9\u8fb9\u6211\u770b\u7740\u4e86\u3002\u6709\u660e\u786e\u6587\u672c\u65f6\u6211\u4f1a\u53ea\u6311\u5173\u952e\u5904\u63d0\u9192\uff0c\u4e0d\u4f1a\u4e71\u63d2\u8bdd\u3002",
+            if (hint != null) "$name：$user，屏幕里提到「$hint」，我先按这个线索帮你盯下一步。" else "$name：$user，当前画面文字不足，我先安静观察，不贸然下判断。",
             maxChars,
             name,
             user,
-            appName
+            appName,
+            screenText
         )
         if (preferences.resolvedApiProfiles().none { it.isUsable() }) return localFallback
         return try {
@@ -790,19 +860,19 @@ class FloatingService : Service() {
                 maxChars = maxChars
             )
             val response = FallbackAIClient(preferences).complete(request)
-            fitProactiveLength(response.text.ifBlank { localFallback }.withCompanionName(name), maxChars, name, user, appName)
+            fitProactiveLength(response.text.ifBlank { localFallback }.withCompanionName(name), maxChars, name, user, appName, screenText)
         } catch (_: Exception) {
             localFallback
         }
     }
 
-    private fun fitProactiveLength(message: String, maxChars: Int, name: String, user: String, appName: String): String {
+    private fun fitProactiveLength(message: String, maxChars: Int, name: String, user: String, appName: String, screenText: String): String {
         if (maxChars <= 0 || message.length <= maxChars) return message
         val prefix = "$name\uff1a"
+        val hint = screenText.lineSequence().map { it.trim() }.firstOrNull { it.length >= 4 }?.take(12)
         val candidates = listOf(
-            "$prefix$user\uff0c$appName \u6709\u65b0\u52a8\u9759\uff0c\u6211\u53ea\u6311\u91cd\u70b9\u63d0\u9192\u4f60\u3002",
-            "$prefix$appName \u8fd9\u91cc\u6211\u770b\u5230\u4e86\uff0c\u5148\u4e0d\u6253\u65ad\u4f60\u3002",
-            "$prefix\u5df2\u7ed3\u5408\u5f53\u524d\u753b\u9762\u3002"
+            if (hint != null) "$prefix$user，看见「$hint」，先抓这个线索。" else "$prefix$user，画面文字不足，我先不乱判断。",
+            if (hint != null) "$prefix「$hint」像是当前重点。" else "${prefix}当前文字不足，先安静观察。"
         )
         return candidates.firstOrNull { it.length <= maxChars } ?: prefix.take(maxChars.coerceAtLeast(1))
     }
@@ -818,10 +888,11 @@ class FloatingService : Service() {
         return try {
             val request = promptEngine.buildLongConversationPrompt(
                 userText = userText,
-                screenText = context.ifBlank { "No visible text captured yet." },
+                screenText = context.ifBlank { "屏幕文字为空或暂不可读。" },
                 customPersona = "AI name: $name\nUser name: $user\n$customPersona",
                 memory = memoryText,
-                conversation = conversationText()
+                conversation = conversationText(),
+                maxChars = preferences.companionReplyMaxChars.first()
             )
             FallbackAIClient(preferences).complete(request).text.ifBlank { fallback }.withCompanionName(name)
         } catch (_: Exception) {
@@ -1144,6 +1215,7 @@ class FloatingService : Service() {
         const val SCROLL_VIEW_TAG = "ocean_message_scroll"
         const val ACTIVE_APP_CHECK_INTERVAL_MS = 3_000L
         const val IMMEDIATE_APP_COOLDOWN_MS = 45_000L
+        const val GLOBAL_PROACTIVE_COOLDOWN_MS = 20_000L
         const val PROACTIVE_BANNER_DURATION_MS = 8_000L
         const val SCREEN_CONTEXT_FRESH_MS = 12_000L
         const val USAGE_STATS_LOOKBACK_MS = 30_000L

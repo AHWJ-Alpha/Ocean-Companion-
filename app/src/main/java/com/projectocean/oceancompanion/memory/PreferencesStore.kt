@@ -29,7 +29,10 @@ class PreferencesStore(private val context: Context) {
     val panelRatio = context.dataStore.data.map { it[Keys.PanelRatio] ?: 0.5f }
     val proactiveReminders = context.dataStore.data.map { it[Keys.ProactiveReminders] ?: true }
     val proactiveBannerMaxChars = context.dataStore.data.map { it[Keys.ProactiveBannerMaxChars] ?: 60 }
+    val companionReplyMaxChars = context.dataStore.data.map { it[Keys.CompanionReplyMaxChars] ?: 0 }
     val proactiveBannerOffsetDp = context.dataStore.data.map { it[Keys.ProactiveBannerOffsetDp] ?: 12 }
+    val proactiveMuteMinutes = context.dataStore.data.map { it[Keys.ProactiveMuteMinutes] ?: 30 }
+    val proactiveMutedUntil = context.dataStore.data.map { it[Keys.ProactiveMutedUntil] ?: 0L }
     val companionOpenGesture = context.dataStore.data.map { it[Keys.CompanionOpenGesture] ?: "long_press" }
     val lastUpdatePromptDay = context.dataStore.data.map { it[Keys.LastUpdatePromptDay] ?: "" }
     val lastWhatsNewVersion = context.dataStore.data.map { it[Keys.LastWhatsNewVersion] ?: "" }
@@ -69,7 +72,9 @@ class PreferencesStore(private val context: Context) {
     suspend fun setPanelRatio(value: Float) = context.dataStore.edit { it[Keys.PanelRatio] = value }
     suspend fun setProactiveReminders(value: Boolean) = context.dataStore.edit { it[Keys.ProactiveReminders] = value }
     suspend fun setProactiveBannerMaxChars(value: Int) = context.dataStore.edit { it[Keys.ProactiveBannerMaxChars] = value }
+    suspend fun setCompanionReplyMaxChars(value: Int) = context.dataStore.edit { it[Keys.CompanionReplyMaxChars] = value }
     suspend fun setProactiveBannerOffsetDp(value: Int) = context.dataStore.edit { it[Keys.ProactiveBannerOffsetDp] = value }
+    suspend fun setProactiveMutedUntil(value: Long) = context.dataStore.edit { it[Keys.ProactiveMutedUntil] = value }
     suspend fun setCompanionOpenGesture(value: String) = context.dataStore.edit { it[Keys.CompanionOpenGesture] = value }
     suspend fun setLastUpdatePromptDay(value: String) = context.dataStore.edit { it[Keys.LastUpdatePromptDay] = value }
     suspend fun setLastWhatsNewVersion(value: String) = context.dataStore.edit { it[Keys.LastWhatsNewVersion] = value }
@@ -94,7 +99,9 @@ class PreferencesStore(private val context: Context) {
         panelRatio: Float,
         proactiveReminders: Boolean,
         proactiveBannerMaxChars: Int = 60,
+        companionReplyMaxChars: Int = 0,
         proactiveBannerOffsetDp: Int = 12,
+        proactiveMuteMinutes: Int = 30,
         companionOpenGesture: String = "long_press",
         themeMode: String = "system",
         animePrimaryColor: String = "#39C5BB",
@@ -113,7 +120,9 @@ class PreferencesStore(private val context: Context) {
         panelRatio = panelRatio,
         proactiveReminders = proactiveReminders,
         proactiveBannerMaxChars = proactiveBannerMaxChars,
+        companionReplyMaxChars = companionReplyMaxChars,
         proactiveBannerOffsetDp = proactiveBannerOffsetDp,
+        proactiveMuteMinutes = proactiveMuteMinutes,
         companionOpenGesture = companionOpenGesture,
         themeMode = themeMode,
         animePrimaryColor = animePrimaryColor,
@@ -143,7 +152,9 @@ class PreferencesStore(private val context: Context) {
         panelRatio: Float,
         proactiveReminders: Boolean,
         proactiveBannerMaxChars: Int = 60,
+        companionReplyMaxChars: Int = 0,
         proactiveBannerOffsetDp: Int = 12,
+        proactiveMuteMinutes: Int = 30,
         companionOpenGesture: String = "long_press",
         themeMode: String = "system",
         animePrimaryColor: String = "#39C5BB",
@@ -164,7 +175,9 @@ class PreferencesStore(private val context: Context) {
         it[Keys.PanelRatio] = panelRatio
         it[Keys.ProactiveReminders] = proactiveReminders
         it[Keys.ProactiveBannerMaxChars] = proactiveBannerMaxChars
+        it[Keys.CompanionReplyMaxChars] = companionReplyMaxChars
         it[Keys.ProactiveBannerOffsetDp] = proactiveBannerOffsetDp
+        it[Keys.ProactiveMuteMinutes] = proactiveMuteMinutes
         it[Keys.CompanionOpenGesture] = companionOpenGesture
         it[Keys.ThemeMode] = themeMode
         it[Keys.AnimePrimaryColor] = animePrimaryColor
@@ -187,7 +200,10 @@ class PreferencesStore(private val context: Context) {
         val PanelRatio = floatPreferencesKey("panel_ratio")
         val ProactiveReminders = booleanPreferencesKey("proactive_reminders")
         val ProactiveBannerMaxChars = intPreferencesKey("proactive_banner_max_chars")
+        val CompanionReplyMaxChars = intPreferencesKey("companion_reply_max_chars")
         val ProactiveBannerOffsetDp = intPreferencesKey("proactive_banner_offset_dp")
+        val ProactiveMuteMinutes = intPreferencesKey("proactive_mute_minutes")
+        val ProactiveMutedUntil = androidx.datastore.preferences.core.longPreferencesKey("proactive_muted_until")
         val CompanionOpenGesture = stringPreferencesKey("companion_open_gesture")
         val LastUpdatePromptDay = stringPreferencesKey("last_update_prompt_day")
         val LastWhatsNewVersion = stringPreferencesKey("last_whats_new_version")

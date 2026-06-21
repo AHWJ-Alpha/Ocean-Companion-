@@ -3,10 +3,16 @@ package com.projectocean.oceancompanion.ai
 class PromptEngine {
     fun buildScreenAnalysisPrompt(text: String, persona: Persona): AIRequest {
         val prompt = """
-            \u8bf7\u5206\u6790\u5f53\u524d\u5c4f\u5e55\u5185\u5bb9\u3002
-            \u8f93\u51fa\uff1a\u6458\u8981\u3001\u5173\u952e\u70b9\u3001\u4e0b\u4e00\u6b65\u5efa\u8bae\u3002
+            请严格基于当前屏幕文本分析，不要补写屏幕上没有出现的信息。
+            如果文本很少、噪声很大或无法判断，请明确说“不确定”，不要强行推断。
 
-            \u5c4f\u5e55\u6587\u672c\uff1a
+            输出格式：
+            1. 已识别事实：引用屏幕里的关键词或短句作为依据。
+            2. 可能意图：只根据可见文本推断，标注不确定点。
+            3. 可执行动作：给出下一步可以直接做的操作或提问。
+            4. 不确定内容：列出需要再次截图、打开文件或开启无障碍才能确认的部分。
+
+            屏幕文本：
             $text
         """.trimIndent()
         return AIRequest(prompt = prompt, persona = persona, context = text)
@@ -14,10 +20,10 @@ class PromptEngine {
 
     fun buildProblemSolvingPrompt(text: String, persona: Persona): AIRequest {
         val prompt = """
-            \u8bf7\u89e3\u7b54\u6216\u89e3\u91ca\u4e0b\u9762\u7684\u5b66\u4e60\u9898\u76ee\u3002
-            \u4f7f\u7528\u6e05\u6670\u6b65\u9aa4\uff0c\u5fc5\u8981\u65f6\u8bf4\u660e\u5047\u8bbe\u6761\u4ef6\u3002
+            请解答或解释下面的学习题目。
+            使用清晰步骤，必要时说明假设条件；如果题目缺少条件，请先指出缺失信息。
 
-            \u9898\u76ee\u5185\u5bb9\uff1a
+            题目内容：
             $text
         """.trimIndent()
         return AIRequest(prompt = prompt, persona = persona, context = text)
@@ -25,16 +31,16 @@ class PromptEngine {
 
     fun buildCompanionPrompt(screenText: String, customPersona: String, memory: String): AIRequest {
         val prompt = """
-            \u4f60\u662f\u684c\u9762\u4f34\u968f\u5f0f AI\u3002\u8bf7\u6839\u636e\u5f53\u524d\u5c4f\u5e55\u4fe1\u606f\u4e3b\u52a8\u8bf4\u4e00\u53e5\u6709\u7528\u3001\u7b80\u77ed\u7684\u8bdd\u3002
-            \u4e0d\u8981\u5199\u957f\u7bc7\u8bf4\u660e\uff0c\u4e0d\u8981\u6253\u6270\u7528\u6237\u3002
+            你是桌面伴随式 AI。请根据当前屏幕信息主动说一句有用、简短的话。
+            不要打扰用户，不要编造屏幕上没有的信息。
 
-            \u81ea\u5b9a\u4e49\u4eba\u683c\uff1a
+            自定义人格：
             $customPersona
 
-            \u957f\u65f6\u8bb0\u5fc6\uff1a
+            长时记忆：
             $memory
 
-            \u5f53\u524d\u5c4f\u5e55\u6587\u672c\uff1a
+            当前屏幕文本：
             $screenText
         """.trimIndent()
         return AIRequest(prompt = prompt, persona = Persona.OceanNative, context = screenText)
@@ -52,39 +58,39 @@ class PromptEngine {
         val lengthRule = if (maxChars > 0) {
             "必须在 ${maxChars} 个中文字符以内完成表达，句子要完整，不要用省略号补尾，不要输出超过限制的内容。"
         } else {
-            "弹幕长度不受限制，可以完整输出你认为必要的内容，但仍应保持自然、不啰嗦。"
+            "弹幕长度不受限制，可以完整输出必要内容，但仍要自然、克制，不要啰嗦。"
         }
         val prompt = """
-            \u4f60\u662f Ocean Companion\uff0c\u4e00\u4e2a\u684c\u9762\u4f34\u968f\u5f0f AI Agent\u3002
-            \u8fd9\u4e0d\u662f\u804a\u5929\u56de\u590d\uff0c\u800c\u662f\u4e00\u6761\u77ed\u6682\u51fa\u73b0\u7684\u684c\u9762\u5f39\u5e55\u3002
-            \u8bf7\u7ed3\u5408\u5f53\u524d\u684c\u9762\u5185\u5bb9\u3001\u5f53\u524d\u5e94\u7528\u3001\u6700\u8fd1\u64cd\u4f5c/\u5bf9\u8bdd\u5386\u53f2\u3001\u957f\u671f\u8bb0\u5fc6\u548c\u4eba\u683c\u8bf4\u660e\uff0c\u4e3b\u52a8\u8bf4\u4e00\u53e5\u81ea\u7136\u3001\u6709\u573a\u666f\u611f\u3001\u4e0d\u6253\u6270\u7684\u8bdd\u3002
-            \u8981\u6c42\uff1a
-            1. \u4f18\u5148\u56de\u5e94\u7528\u6237\u6b63\u5728\u770b\u7684\u5185\u5bb9\u6216\u6b63\u5728\u505a\u7684\u4e8b\u3002
-            2. \u5982\u679c\u5c4f\u5e55\u6587\u672c\u8db3\u591f\u660e\u786e\uff0c\u5fc5\u987b\u70b9\u51fa\u4e00\u4e2a\u5177\u4f53\u5173\u952e\u8bcd\u3001\u9898\u76ee\u6216\u4efb\u52a1\uff1b\u5982\u679c\u6587\u672c\u4e0d\u8db3\uff0c\u5c31\u53ea\u7ed3\u5408\u5e94\u7528\u540d/\u5305\u540d\u548c\u4eba\u683c\u53d1\u8a00\u3002
-            3. \u53ef\u4ee5\u63d0\u9192\u3001\u603b\u7ed3\u3001\u63d0\u95ee\u6216\u7ed9\u51fa\u4e0b\u4e00\u6b65\u5efa\u8bae\uff0c\u4f46\u4e0d\u8981\u7f16\u9020\u6ca1\u6709\u7684\u5c4f\u5e55\u4fe1\u606f\u3002
-            3. \u6700\u8fd1\u64cd\u4f5c/\u5bf9\u8bdd\u5386\u53f2\u53ea\u7528\u4e8e\u7406\u89e3\u504f\u597d\u548c\u8fde\u7eed\u6027\uff0c\u4e0d\u8981\u590d\u8ff0\u65e7\u5bf9\u8bdd\u3002
-            4. \u907f\u514d\u6cdb\u6cdb\u5bd2\u6684\uff0c\u4e0d\u8981\u8bf4\u201c\u6211\u8fd8\u5728\u201d\u201c\u9700\u8981\u6211\u603b\u7ed3\u5417\u201d\u201c\u6709\u9700\u8981\u968f\u65f6\u53eb\u6211\u201d\u8fd9\u7c7b\u7a7a\u8bdd\u3002
-            5. \u5fc5\u987b\u751f\u6210\u4e00\u53e5\u65b0\u7684\u4e3b\u52a8\u53d1\u8a00\uff0c\u4e0d\u8981\u628a\u5b83\u5199\u6210\u5bf9\u65e7\u5bf9\u8bdd\u7684\u56de\u590d\u3002
-            6. \u53ea\u8f93\u51fa\u4e00\u5230\u4e24\u53e5\uff0c\u9002\u5408\u5c4f\u5e55\u5f39\u5e55\u9605\u8bfb\uff0c\u4e0d\u8981\u5199\u6807\u9898\u3001\u5217\u8868\u6216\u7cfb\u7edf\u89e3\u91ca\u3002
-            7. \u8bed\u6c14\u5fc5\u987b\u9075\u5faa\u4eba\u683c\u8bf4\u660e\u3002
+            你是 Ocean Companion，一个桌面伴随式 AI Agent。
+            这不是聊天回复，而是一条短暂出现的桌面弹幕。
+
+            请结合当前桌面内容、当前应用、最近操作/对话历史、长期记忆和人格说明，主动说一条新的、自然的、有场景感的话。
+            要求：
+            1. 优先回应用户正在看的内容或正在做的事。
+            2. 如果屏幕文本足够明确，必须点出一个具体关键词、题目、任务或文件内容；如果文字不足，只能说明“画面文字不足”，不要编造。
+            3. 可以提醒、总结、提问或给下一步建议，但必须有实际信息量，不要只是陪伴式寒暄。
+            4. 不要说“某应用有新消息”“我捡重点说一下”“需要我总结吗”“随时叫我”这类空话。
+            5. 最近历史只用于理解偏好和连续性，不要复述旧对话。
+            6. 只输出一到两句，不要写标题、列表或系统解释。
+            7. 语气必须遵循人格说明。
             8. $lengthRule
 
-            \u4eba\u683c\u8bf4\u660e\uff1a
+            人格说明：
             $customPersona
 
-            \u89e6\u53d1\u5e94\u7528\u5173\u952e\u8bcd\uff1a
+            触发应用关键词：
             $triggerApps
 
-            \u5f53\u524d\u5e94\u7528\u5305\u540d\uff1a
+            当前应用包名：
             $currentPackage
 
-            \u957f\u671f\u8bb0\u5fc6\uff1a
+            长期记忆：
             $memory
 
-            \u6700\u8fd1\u64cd\u4f5c/\u5bf9\u8bdd\u5386\u53f2\uff1a
+            最近操作/对话历史：
             $operationHistory
 
-            \u5f53\u524d\u684c\u9762/\u6587\u4ef6\u6587\u672c\uff1a
+            当前桌面/文件文本：
             $screenText
         """.trimIndent()
         return AIRequest(prompt = prompt, persona = Persona.OceanNative, context = screenText)
@@ -95,28 +101,31 @@ class PromptEngine {
         screenText: String,
         customPersona: String,
         memory: String,
-        conversation: String
+        conversation: String,
+        maxChars: Int = 0
     ): AIRequest {
+        val lengthRule = if (maxChars > 0) "本次回复控制在 ${maxChars} 个中文字符以内。" else "本次回复不设硬性字数限制。"
         val prompt = """
-            \u4f60\u662f Ocean Companion\uff0c\u4e00\u4e2a\u5e38\u9a7b\u684c\u9762\u7684\u4f34\u968f\u5f0f AI\u3002
-            \u8bf7\u76f4\u63a5\u56de\u7b54\u7528\u6237\uff0c\u5e76\u4e3b\u52a8\u7ed3\u5408\u5f53\u524d\u684c\u9762/\u6587\u4ef6\u6587\u672c\u3001\u957f\u671f\u8bb0\u5fc6\u548c\u6700\u8fd1\u5bf9\u8bdd\u3002
-            \u5982\u679c\u5c4f\u5e55\u6587\u672c\u4e3a\u7a7a\uff0c\u5c31\u57fa\u4e8e\u957f\u671f\u8bb0\u5fc6\u548c\u5f53\u524d\u5bf9\u8bdd\u7ee7\u7eed\u804a\u3002
-            \u56de\u7b54\u8981\u81ea\u7136\u3001\u7b80\u6d01\u3001\u6709\u5e2e\u52a9\u3002\u5fc5\u8981\u65f6\u53ef\u4ee5\u8ffd\u95ee\u4e00\u4e2a\u95ee\u9898\u3002
-            \u957f\u5bf9\u8bdd\u7a97\u53e3\u652f\u6301 Markdown\u3002\u5982\u679c\u5185\u5bb9\u9700\u8981\u7ed3\u6784\u5316\uff0c\u53ef\u4ee5\u4f7f\u7528\u6807\u9898\u3001\u7c97\u4f53\u3001\u5217\u8868\u3001\u884c\u5185\u4ee3\u7801\u6216\u4ee3\u7801\u5757\u3002
+            你是 Ocean Companion，一个常驻桌面的伴随式 AI。
+            请直接回答用户，并主动结合当前桌面/文件文本、长期记忆和最近对话。
+            如果屏幕文本为空或不可用，必须说明依据不足，只基于长期记忆和当前对话继续，不要编造屏幕内容。
+            回答不能只“说说看法”，要尽量做到：先判断依据，再给明确动作，例如提炼、计算、改写、列步骤、生成可执行方案或指出下一步操作。
+            $lengthRule
+            长对话窗口支持 Markdown。如果内容需要结构化，可以使用标题、粗体、列表、行内代码或代码块。
 
-            \u81ea\u5b9a\u4e49\u4eba\u683c\uff1a
+            自定义人格：
             $customPersona
 
-            \u957f\u671f\u8bb0\u5fc6\uff1a
+            长期记忆：
             $memory
 
-            \u5f53\u524d\u684c\u9762/\u6587\u4ef6\u6587\u672c\uff1a
+            当前桌面/文件文本：
             $screenText
 
-            \u6700\u8fd1\u5bf9\u8bdd\uff1a
+            最近对话：
             $conversation
 
-            \u7528\u6237\u521a\u521a\u8bf4\uff1a
+            用户刚刚说：
             $userText
         """.trimIndent()
         return AIRequest(prompt = prompt, persona = Persona.OceanNative, context = screenText)

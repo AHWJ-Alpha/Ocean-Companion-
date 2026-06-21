@@ -15,6 +15,8 @@ class CustomAIClient(
     private val baseUrl: String,
     private val apiKey: String,
     private val model: String,
+    private val supportsReasoning: Boolean = false,
+    private val reasoningEffort: String = "medium",
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -30,6 +32,7 @@ class CustomAIClient(
             })
             .put("temperature", 0.7)
             .put("stream", false)
+        applyReasoningOptions(body)
 
         executeChatRequest(body)
     }
@@ -45,8 +48,16 @@ class CustomAIClient(
             })
             .put("temperature", 0.45)
             .put("stream", false)
+        applyReasoningOptions(body)
 
         executeChatRequest(body)
+    }
+
+    private fun applyReasoningOptions(body: JSONObject) {
+        if (!supportsReasoning) return
+        val effort = reasoningEffort.trim().lowercase().ifBlank { "medium" }
+        body.put("reasoning_effort", effort)
+        body.put("extra_body", JSONObject().put("enable_thinking", true))
     }
 
     private fun executeChatRequest(body: JSONObject): AIResponse {

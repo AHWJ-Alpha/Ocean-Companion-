@@ -105,7 +105,8 @@ class MainActivity : ComponentActivity() {
                             )
                         )
                     },
-                    onPickIconImage = { iconPicker.launch(arrayOf("image/*")) }
+                    onPickIconImage = { iconPicker.launch(arrayOf("image/*")) },
+                    onCheckUpdate = { checkForUpdatesManually() }
                 )
             }
         }
@@ -124,11 +125,11 @@ class MainActivity : ComponentActivity() {
                     .setTitle("New! Ocean Companion $version")
                     .setMessage(
                         "本次更新重点：\n" +
-                            "- 新增二次元主题模式，默认蓝青色调，并支持自定义两种主题色。\n" +
-                            "- 主动弹幕和长对话窗口会跟随主题色变化。\n" +
-                            "- 设置页保存后会保留当前配置，API Key 以加密样式显示。\n" +
-                            "- 新增历史页，可按时间/主题查看、搜索和修改会话。\n" +
-                            "- 统一页面圆角、间距和对齐风格。"
+                            "- 修复自动更新不易感知的问题，新增手动检查更新。\n" +
+                            "- API Key 输入更顺手，支持显示/隐藏和局部确认。\n" +
+                            "- API 配置可自动获取模型列表，并支持深度思考模型参数。\n" +
+                            "- 长对话可限制每次 AI 输出长度，0 表示无限制。\n" +
+                            "- 主动弹幕增加三击静默、重复抑制和更严格的屏幕依据。"
                     )
                     .setPositiveButton("知道了", null)
                     .show()
@@ -143,15 +144,30 @@ class MainActivity : ComponentActivity() {
             if (store.lastUpdatePromptDay.first() == today) return@launch
             val update = UpdateChecker().checkLatest() ?: return@launch
             store.setLastUpdatePromptDay(today)
-            if (!isFinishing && !isDestroyed) {
-                AlertDialog.Builder(this@MainActivity)
-                    .setTitle("发现新版本 ${update.latestVersion}")
-                    .setMessage(update.body.take(500).ifBlank { "检测到 Ocean Companion 有新版本可用。" })
-                    .setPositiveButton("去下载") { _, _ -> openReleasePage(update.releaseUrl) }
-                    .setNegativeButton("稍后", null)
-                    .show()
-            }
+            showUpdateDialog(update.latestVersion, update.releaseUrl, update.body.take(500))
         }
+    }
+
+    private fun checkForUpdatesManually() {
+        CoroutineScope(Dispatchers.Main).launch {
+            Toast.makeText(this@MainActivity, "正在检查更新...", Toast.LENGTH_SHORT).show()
+            val update = UpdateChecker().checkLatest()
+            if (update == null) {
+                Toast.makeText(this@MainActivity, "当前已是最新版本，或暂时无法获取更新信息。", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            showUpdateDialog(update.latestVersion, update.releaseUrl, update.body.take(700))
+        }
+    }
+
+    private fun showUpdateDialog(version: String, url: String, body: String) {
+        if (isFinishing || isDestroyed) return
+        AlertDialog.Builder(this)
+            .setTitle("发现新版本 $version")
+            .setMessage(body.ifBlank { "检测到 Ocean Companion 有新版本可用。" })
+            .setPositiveButton("去下载") { _, _ -> openReleasePage(url) }
+            .setNegativeButton("稍后", null)
+            .show()
     }
 
     private fun openReleasePage(url: String) {
@@ -213,7 +229,8 @@ private fun OceanPreview() {
             onOpenAccessibility = {},
             onRequestScreenCapture = {},
             onPickFile = {},
-            onPickIconImage = {}
+            onPickIconImage = {},
+            onCheckUpdate = {}
         )
     }
 }

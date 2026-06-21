@@ -12,7 +12,9 @@ data class ApiProfile(
     val apiKey: String = "",
     val model: String = "gpt-4o-mini",
     val enabled: Boolean = true,
-    val supportsVision: Boolean = false
+    val supportsVision: Boolean = false,
+    val supportsReasoning: Boolean = false,
+    val reasoningEffort: String = "medium"
 ) {
     fun isUsable(): Boolean = enabled && baseUrl.isNotBlank() && apiKey.isNotBlank() && model.isNotBlank()
 
@@ -25,6 +27,8 @@ data class ApiProfile(
         .put("model", model)
         .put("enabled", enabled)
         .put("supportsVision", supportsVision)
+        .put("supportsReasoning", supportsReasoning)
+        .put("reasoningEffort", reasoningEffort)
 
     companion object {
         fun fromJson(json: JSONObject): ApiProfile = ApiProfile(
@@ -35,7 +39,9 @@ data class ApiProfile(
             apiKey = json.optString("apiKey"),
             model = json.optString("model"),
             enabled = json.optBoolean("enabled", true),
-            supportsVision = json.optBoolean("supportsVision", false)
+            supportsVision = json.optBoolean("supportsVision", false),
+            supportsReasoning = json.optBoolean("supportsReasoning", false),
+            reasoningEffort = json.optString("reasoningEffort").ifBlank { "medium" }
         )
 
         fun encode(profiles: List<ApiProfile>): String {

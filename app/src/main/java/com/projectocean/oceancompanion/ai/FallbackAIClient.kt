@@ -9,7 +9,13 @@ class FallbackAIClient(private val preferences: PreferencesStore) {
         if (profiles.isEmpty()) return AIResponse("", "none")
         var lastError = ""
         profiles.forEach { profile ->
-            val response = CustomAIClient(profile.baseUrl, profile.apiKey, profile.model).complete(request)
+            val response = CustomAIClient(
+                profile.baseUrl,
+                profile.apiKey,
+                profile.model,
+                supportsReasoning = profile.supportsReasoning,
+                reasoningEffort = profile.reasoningEffort
+            ).complete(request)
             if (!response.text.looksLikeFailure()) return response.copy(provider = profile.label.ifBlank { profile.provider })
             lastError = response.text
         }
@@ -23,7 +29,13 @@ class FallbackAIClient(private val preferences: PreferencesStore) {
         if (profiles.isEmpty()) return AIResponse("", "none")
         var lastError = ""
         profiles.forEach { profile ->
-            val response = CustomAIClient(profile.baseUrl, profile.apiKey, profile.model).completeVision(prompt, imageBase64Png)
+            val response = CustomAIClient(
+                profile.baseUrl,
+                profile.apiKey,
+                profile.model,
+                supportsReasoning = profile.supportsReasoning,
+                reasoningEffort = profile.reasoningEffort
+            ).completeVision(prompt, imageBase64Png)
             if (!response.text.looksLikeFailure()) return response.copy(provider = profile.label.ifBlank { profile.provider })
             lastError = response.text
         }

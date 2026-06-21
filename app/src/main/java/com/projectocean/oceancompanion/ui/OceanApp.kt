@@ -71,6 +71,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.projectocean.oceancompanion.ai.ApiProfile
+import com.projectocean.oceancompanion.ai.ModelCatalogClient
 import com.projectocean.oceancompanion.agent.SharedScreenContext
 import com.projectocean.oceancompanion.memory.ConversationHistory
 import com.projectocean.oceancompanion.memory.OceanDatabase
@@ -92,7 +93,8 @@ fun OceanApp(
     onOpenAccessibility: () -> Unit,
     onRequestScreenCapture: () -> Unit,
     onPickFile: () -> Unit,
-    onPickIconImage: () -> Unit
+    onPickIconImage: () -> Unit,
+    onCheckUpdate: () -> Unit = {}
 ) {
     var selected by remember { mutableIntStateOf(0) }
     val items = listOf(
@@ -120,7 +122,7 @@ fun OceanApp(
             0 -> HomeScreen(Modifier.padding(padding), onStartFloating)
             1 -> CaptureScreen(Modifier.padding(padding), onOpenAccessibility, onRequestScreenCapture, onPickFile)
             2 -> HistoryScreen(Modifier.padding(padding))
-            else -> SettingsScreen(Modifier.padding(padding), onPickIconImage)
+            else -> SettingsScreen(Modifier.padding(padding), onPickIconImage, onCheckUpdate)
         }
     }
 }
@@ -336,7 +338,7 @@ private fun HistoryGroupCard(
 }
 
 @Composable
-private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
+private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit, onCheckUpdate: () -> Unit) {
     val context = LocalContext.current
     val store = remember { PreferencesStore(context) }
     val scope = rememberCoroutineScope()
@@ -354,7 +356,9 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     val panelRatio by store.panelRatio.collectAsState(0.5f)
     val proactive by store.proactiveReminders.collectAsState(true)
     val proactiveBannerMaxChars by store.proactiveBannerMaxChars.collectAsState(60)
+    val companionReplyMaxChars by store.companionReplyMaxChars.collectAsState(0)
     val proactiveBannerOffset by store.proactiveBannerOffsetDp.collectAsState(12)
+    val proactiveMuteMinutes by store.proactiveMuteMinutes.collectAsState(30)
     val companionOpenGesture by store.companionOpenGesture.collectAsState("long_press")
     val themeMode by store.themeMode.collectAsState("system")
     val animePrimaryColor by store.animePrimaryColor.collectAsState("#39C5BB")
@@ -371,7 +375,9 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     var panelRatioDraft by remember { mutableStateOf(panelRatio) }
     var proactiveDraft by remember { mutableStateOf(proactive) }
     var proactiveBannerMaxCharsDraft by remember { mutableStateOf(proactiveBannerMaxChars) }
+    var companionReplyMaxCharsDraft by remember { mutableStateOf(companionReplyMaxChars) }
     var proactiveBannerOffsetDraft by remember { mutableStateOf(proactiveBannerOffset) }
+    var proactiveMuteMinutesDraft by remember { mutableStateOf(proactiveMuteMinutes) }
     var companionOpenGestureDraft by remember { mutableStateOf(companionOpenGesture) }
     var themeModeDraft by remember { mutableStateOf(themeMode) }
     var animePrimaryColorDraft by remember { mutableStateOf(animePrimaryColor) }
@@ -389,7 +395,7 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
         installedApps = withContext(Dispatchers.Default) { loadInstalledApps(context).take(18) }
     }
 
-    LaunchedEffect(profiles, provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive, proactiveBannerMaxChars, proactiveBannerOffset, companionOpenGesture, themeMode, animePrimaryColor, animeSecondaryColor) {
+    LaunchedEffect(profiles, provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive, proactiveBannerMaxChars, companionReplyMaxChars, proactiveBannerOffset, proactiveMuteMinutes, companionOpenGesture, themeMode, animePrimaryColor, animeSecondaryColor) {
         if (draftsLoaded) return@LaunchedEffect
         apiProfilesDraft = profiles.ifEmpty {
             listOf(ApiProfile(label = provider.ifBlank { "OpenAI" }, provider = provider, baseUrl = apiBaseUrl, apiKey = apiKey, model = modelName))
@@ -403,7 +409,9 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
         panelRatioDraft = panelRatio
         proactiveDraft = proactive
         proactiveBannerMaxCharsDraft = proactiveBannerMaxChars
+        companionReplyMaxCharsDraft = companionReplyMaxChars
         proactiveBannerOffsetDraft = proactiveBannerOffset
+        proactiveMuteMinutesDraft = proactiveMuteMinutes
         companionOpenGestureDraft = companionOpenGesture
         themeModeDraft = themeMode
         animePrimaryColorDraft = animePrimaryColor
@@ -535,6 +543,23 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                     } else {
                         MutedText("\u5f53\u524d\u4e3a\u4e0d\u9650\u5236\uff1a\u4e3b\u52a8\u5f39\u5e55\u4f1a\u5b8c\u6574\u663e\u793a AI \u8f93\u51fa\uff0c\u4e0d\u4f1a\u622a\u65ad\u3002", small = true)
                     }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("限制长对话回复字数", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                        Switch(
+                            checked = companionReplyMaxCharsDraft > 0,
+                            onCheckedChange = { checked -> companionReplyMaxCharsDraft = if (checked) 800 else 0 }
+                        )
+                    }
+                    if (companionReplyMaxCharsDraft > 0) {
+                        Text("每次 AI 回复最大长度：${companionReplyMaxCharsDraft.coerceIn(120, 2000)} 字")
+                        Slider(
+                            value = companionReplyMaxCharsDraft.coerceIn(120, 2000).toFloat(),
+                            onValueChange = { companionReplyMaxCharsDraft = it.toInt().coerceIn(120, 2000) },
+                            valueRange = 120f..2000f
+                        )
+                    } else {
+                        MutedText("0 表示不限制长对话回复长度；提示词仍会要求 AI 既解释判断，也给出明确行动。", small = true)
+                    }
                     Text("\u5f39\u5e55\u8ddd\u79bb\u60ac\u6d6e\u7403\uff1a${proactiveBannerOffsetDraft.coerceIn(0, 160)} dp")
                     Slider(
                         value = proactiveBannerOffsetDraft.coerceIn(0, 160).toFloat(),
@@ -542,6 +567,12 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                         valueRange = 0f..160f
                     )
                     MutedText("\u8ddd\u79bb\u8d8a\u5927\uff0c\u5f39\u5e55\u8d8a\u4e0d\u5bb9\u6613\u6321\u4f4f\u60ac\u6d6e\u7403\u9644\u8fd1\u7684\u64cd\u4f5c\u3002", small = true)
+                    Text("三击弹幕后暂停主动弹幕：${proactiveMuteMinutesDraft.coerceIn(5, 240)} 分钟")
+                    Slider(
+                        value = proactiveMuteMinutesDraft.coerceIn(5, 240).toFloat(),
+                        onValueChange = { proactiveMuteMinutesDraft = it.toInt().coerceIn(5, 240) },
+                        valueRange = 5f..240f
+                    )
                     Text("\u957f\u5bf9\u8bdd\u547c\u51fa\u65b9\u5f0f", fontWeight = FontWeight.SemiBold)
                     companionGestureOptions.forEach { option ->
                         FullWidthIconButton(
@@ -593,7 +624,9 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                                 panelRatio = panelRatioDraft.coerceIn(0.35f, 0.8f),
                                 proactiveReminders = proactiveDraft,
                                 proactiveBannerMaxChars = if (proactiveBannerMaxCharsDraft <= 0) 0 else proactiveBannerMaxCharsDraft.coerceIn(20, 200),
+                                companionReplyMaxChars = if (companionReplyMaxCharsDraft <= 0) 0 else companionReplyMaxCharsDraft.coerceIn(120, 2000),
                                 proactiveBannerOffsetDp = proactiveBannerOffsetDraft.coerceIn(0, 160),
+                                proactiveMuteMinutes = proactiveMuteMinutesDraft.coerceIn(5, 240),
                                 companionOpenGesture = companionOpenGestureDraft,
                                 themeMode = themeModeDraft,
                                 animePrimaryColor = animePrimaryColorDraft.ifBlank { "#39C5BB" },
@@ -601,8 +634,7 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                                 apiProfiles = cleanedProfiles
                             )
                             apiProfilesDraft = cleanedProfiles
-                            savedNotice = "\u8bbe\u7f6e\u5df2\u4fdd\u5b58\uff0c\u7f16\u8f91\u5206\u7ec4\u5df2\u81ea\u52a8\u6536\u8d77"
-                            apiExpanded = false; themeExpanded = false; personaExpanded = false; behaviorExpanded = false
+                            savedNotice = "设置已保存，当前编辑内容会保留；退出应用后再进入也会加载上次记录。"
                         }
                     }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Outlined.Save, contentDescription = null)
@@ -618,6 +650,9 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                 IconTextButton("\u7cfb\u7edf\u8bbe\u7f6e", Icons.Outlined.Settings, { openPackage(context, "com.android.settings") }, Modifier.weight(1f))
                 IconTextButton("\u6253\u5f00\u6587\u4ef6", Icons.Outlined.FolderOpen, { openFileManager(context) }, Modifier.weight(1f))
             }
+        }
+        item {
+            IconTextButton("检查更新", Icons.Outlined.Search, onCheckUpdate, Modifier.fillMaxWidth())
         }
         item {
             ExpandableSection("\u76f8\u5173\u8bf4\u660e", explainExpanded, { explainExpanded = !explainExpanded }) {
@@ -733,27 +768,108 @@ private fun ApiProfileEditor(
     onMoveDown: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+    var local by remember(profile.id) { mutableStateOf(profile) }
+    var showKey by remember(profile.id) { mutableStateOf(false) }
+    var models by remember(profile.id) { mutableStateOf(ModelCatalogClient.fallbackModels(profile.provider)) }
+    var loadingModels by remember(profile.id) { mutableStateOf(false) }
+    var modelNotice by remember(profile.id) { mutableStateOf("") }
+    LaunchedEffect(profile) {
+        if (profile != local) local = profile
+    }
+    fun commit(next: ApiProfile) {
+        local = next
+        onChange(next)
+    }
     Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("#${index + 1}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                Text(profile.label.ifBlank { profile.provider }, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                Text(local.label.ifBlank { local.provider }, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                 OutlinedButton(onClick = onMoveUp, enabled = index > 0) { Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = null) }
                 OutlinedButton(onClick = onMoveDown, enabled = index < total - 1) { Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null) }
                 OutlinedButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, contentDescription = null) }
             }
-            ConfigField("\u914d\u7f6e\u540d", profile.label) { onChange(profile.copy(label = it)) }
-            ConfigField("\u63d0\u4f9b\u5546", profile.provider) { onChange(profile.copy(provider = it)) }
-            ConfigField("API Base URL", profile.baseUrl) { onChange(profile.copy(baseUrl = it)) }
-            ConfigField("API Key", profile.apiKey) { onChange(profile.copy(apiKey = it)) }
-            ConfigField("\u6a21\u578b\u540d\u79f0", profile.model) { onChange(profile.copy(model = it)) }
+            ConfigField("\u914d\u7f6e\u540d", local.label) { commit(local.copy(label = it)) }
+            ConfigField("\u63d0\u4f9b\u5546", local.provider) { commit(local.copy(provider = it)) }
+            ConfigField("API Base URL", local.baseUrl) { commit(local.copy(baseUrl = it)) }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ConfigField("API Key", local.apiKey, password = !showKey, modifier = Modifier.weight(1f)) { value ->
+                    local = local.copy(apiKey = value)
+                }
+                OutlinedButton(onClick = { showKey = !showKey }) { Text(if (showKey) "隐藏" else "显示") }
+            }
+            OutlinedButton(onClick = { commit(local.copy(apiKey = local.apiKey.trim())) }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Outlined.Save, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("确认此 API Key")
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        loadingModels = true
+                        modelNotice = "正在获取模型列表..."
+                        scope.launch {
+                            val result = ModelCatalogClient().fetchModels(local.copy(apiKey = local.apiKey.trim()))
+                            result.onSuccess { fetched ->
+                                models = fetched.ifEmpty { ModelCatalogClient.fallbackModels(local.provider) }
+                                modelNotice = if (fetched.isEmpty()) "接口未返回模型，已显示常见模型。" else "已获取 ${fetched.size} 个模型。"
+                            }.onFailure { error ->
+                                models = ModelCatalogClient.fallbackModels(local.provider)
+                                modelNotice = "获取失败，已显示常见模型：${error.message.orEmpty().take(80)}"
+                            }
+                            loadingModels = false
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    enabled = !loadingModels && local.baseUrl.isNotBlank() && local.apiKey.isNotBlank()
+                ) {
+                    Icon(Icons.Outlined.Search, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (loadingModels) "获取中" else "获取模型")
+                }
+                OutlinedButton(onClick = { models = ModelCatalogClient.fallbackModels(local.provider) }, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Outlined.Add, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("常见模型")
+                }
+            }
+            if (modelNotice.isNotBlank()) MutedText(modelNotice, small = true)
+            ConfigField("自定义模型名", local.model) { value ->
+                val reasoning = local.supportsReasoning || ModelCatalogClient.looksLikeReasoningModel(value)
+                commit(local.copy(model = value, supportsReasoning = reasoning))
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                models.take(24).forEach { model ->
+                    OutlinedButton(onClick = {
+                        commit(local.copy(model = model, supportsReasoning = local.supportsReasoning || ModelCatalogClient.looksLikeReasoningModel(model)))
+                    }) { Text(model, maxLines = 1, softWrap = false) }
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("\u542f\u7528", modifier = Modifier.weight(1f))
-                Switch(checked = profile.enabled, onCheckedChange = { onChange(profile.copy(enabled = it)) })
+                Switch(checked = local.enabled, onCheckedChange = { commit(local.copy(enabled = it)) })
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("\u7528\u4e8e\u622a\u56fe\u8bc6\u56fe", modifier = Modifier.weight(1f))
-                Switch(checked = profile.supportsVision, onCheckedChange = { onChange(profile.copy(supportsVision = it)) })
+                Switch(checked = local.supportsVision, onCheckedChange = { commit(local.copy(supportsVision = it)) })
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("深度思考 / 推理模型", modifier = Modifier.weight(1f))
+                Switch(checked = local.supportsReasoning, onCheckedChange = { commit(local.copy(supportsReasoning = it)) })
+            }
+            if (local.supportsReasoning) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("low", "medium", "high").forEach { effort ->
+                        FullWidthIconButton(
+                            label = when (effort) { "low" -> "低"; "high" -> "高"; else -> "中" },
+                            icon = Icons.Outlined.Settings,
+                            selected = local.reasoningEffort == effort,
+                            onClick = { commit(local.copy(reasoningEffort = effort)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
             }
         }
     }
@@ -839,11 +955,12 @@ private fun ConfigField(
     value: String,
     leadingIcon: ImageVector? = null,
     password: Boolean = label == "API Key",
+    modifier: Modifier = Modifier,
     onChange: (String) -> Unit
 ) {
     var text by remember(value) { mutableStateOf(value) }
     OutlinedTextField(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         value = text,
         onValueChange = {
             text = it
