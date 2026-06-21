@@ -32,6 +32,10 @@ class PreferencesStore(private val context: Context) {
     val proactiveBannerOffsetDp = context.dataStore.data.map { it[Keys.ProactiveBannerOffsetDp] ?: 12 }
     val companionOpenGesture = context.dataStore.data.map { it[Keys.CompanionOpenGesture] ?: "long_press" }
     val lastUpdatePromptDay = context.dataStore.data.map { it[Keys.LastUpdatePromptDay] ?: "" }
+    val lastWhatsNewVersion = context.dataStore.data.map { it[Keys.LastWhatsNewVersion] ?: "" }
+    val themeMode = context.dataStore.data.map { it[Keys.ThemeMode] ?: "system" }
+    val animePrimaryColor = context.dataStore.data.map { it[Keys.AnimePrimaryColor] ?: "#39C5BB" }
+    val animeSecondaryColor = context.dataStore.data.map { it[Keys.AnimeSecondaryColor] ?: "#00AEEF" }
     val apiProfilesJson = context.dataStore.data.map { it[Keys.ApiProfilesJson] ?: "" }
     val apiProfiles = context.dataStore.data.map { prefs ->
         val saved = ApiProfile.decode(prefs[Keys.ApiProfilesJson].orEmpty())
@@ -68,7 +72,11 @@ class PreferencesStore(private val context: Context) {
     suspend fun setProactiveBannerOffsetDp(value: Int) = context.dataStore.edit { it[Keys.ProactiveBannerOffsetDp] = value }
     suspend fun setCompanionOpenGesture(value: String) = context.dataStore.edit { it[Keys.CompanionOpenGesture] = value }
     suspend fun setLastUpdatePromptDay(value: String) = context.dataStore.edit { it[Keys.LastUpdatePromptDay] = value }
+    suspend fun setLastWhatsNewVersion(value: String) = context.dataStore.edit { it[Keys.LastWhatsNewVersion] = value }
     suspend fun setApiProfiles(value: List<ApiProfile>) = context.dataStore.edit { it[Keys.ApiProfilesJson] = ApiProfile.encode(value) }
+    suspend fun setThemeMode(value: String) = context.dataStore.edit { it[Keys.ThemeMode] = value }
+    suspend fun setAnimePrimaryColor(value: String) = context.dataStore.edit { it[Keys.AnimePrimaryColor] = value }
+    suspend fun setAnimeSecondaryColor(value: String) = context.dataStore.edit { it[Keys.AnimeSecondaryColor] = value }
 
     suspend fun resolvedApiProfiles(): List<ApiProfile> = apiProfiles.first()
 
@@ -87,7 +95,10 @@ class PreferencesStore(private val context: Context) {
         proactiveReminders: Boolean,
         proactiveBannerMaxChars: Int = 60,
         proactiveBannerOffsetDp: Int = 12,
-        companionOpenGesture: String = "long_press"
+        companionOpenGesture: String = "long_press",
+        themeMode: String = "system",
+        animePrimaryColor: String = "#39C5BB",
+        animeSecondaryColor: String = "#00AEEF"
     ) = saveSettings(
         provider = provider,
         apiBaseUrl = apiBaseUrl,
@@ -104,6 +115,9 @@ class PreferencesStore(private val context: Context) {
         proactiveBannerMaxChars = proactiveBannerMaxChars,
         proactiveBannerOffsetDp = proactiveBannerOffsetDp,
         companionOpenGesture = companionOpenGesture,
+        themeMode = themeMode,
+        animePrimaryColor = animePrimaryColor,
+        animeSecondaryColor = animeSecondaryColor,
         apiProfiles = listOf(
             ApiProfile(
                 label = provider.ifBlank { "OpenAI" },
@@ -131,6 +145,9 @@ class PreferencesStore(private val context: Context) {
         proactiveBannerMaxChars: Int = 60,
         proactiveBannerOffsetDp: Int = 12,
         companionOpenGesture: String = "long_press",
+        themeMode: String = "system",
+        animePrimaryColor: String = "#39C5BB",
+        animeSecondaryColor: String = "#00AEEF",
         apiProfiles: List<ApiProfile>
     ) = context.dataStore.edit {
         it[Keys.Provider] = provider
@@ -149,6 +166,9 @@ class PreferencesStore(private val context: Context) {
         it[Keys.ProactiveBannerMaxChars] = proactiveBannerMaxChars
         it[Keys.ProactiveBannerOffsetDp] = proactiveBannerOffsetDp
         it[Keys.CompanionOpenGesture] = companionOpenGesture
+        it[Keys.ThemeMode] = themeMode
+        it[Keys.AnimePrimaryColor] = animePrimaryColor
+        it[Keys.AnimeSecondaryColor] = animeSecondaryColor
     }
 
     private object Keys {
@@ -170,6 +190,10 @@ class PreferencesStore(private val context: Context) {
         val ProactiveBannerOffsetDp = intPreferencesKey("proactive_banner_offset_dp")
         val CompanionOpenGesture = stringPreferencesKey("companion_open_gesture")
         val LastUpdatePromptDay = stringPreferencesKey("last_update_prompt_day")
+        val LastWhatsNewVersion = stringPreferencesKey("last_whats_new_version")
+        val ThemeMode = stringPreferencesKey("theme_mode")
+        val AnimePrimaryColor = stringPreferencesKey("anime_primary_color")
+        val AnimeSecondaryColor = stringPreferencesKey("anime_secondary_color")
         val ApiProfilesJson = stringPreferencesKey("api_profiles_json")
     }
 }

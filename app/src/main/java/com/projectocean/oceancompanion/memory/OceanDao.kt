@@ -11,8 +11,20 @@ interface OceanDao {
     @Query("SELECT * FROM conversation_history ORDER BY createdAt DESC LIMIT 50")
     fun recentConversations(): Flow<List<ConversationHistory>>
 
+    @Query("SELECT * FROM conversation_history ORDER BY createdAt DESC LIMIT 400")
+    fun allConversations(): Flow<List<ConversationHistory>>
+
+    @Query("SELECT * FROM conversation_history WHERE content LIKE '%' || :query || '%' OR topic LIKE '%' || :query || '%' ORDER BY createdAt DESC LIMIT 200")
+    fun searchConversations(query: String): Flow<List<ConversationHistory>>
+
     @Insert
     suspend fun insertConversation(item: ConversationHistory)
+
+    @Query("UPDATE conversation_history SET topic = :topic, updatedAt = :updatedAt WHERE sessionId = :sessionId")
+    suspend fun renameConversationTopic(sessionId: String, topic: String, updatedAt: Long = System.currentTimeMillis())
+
+    @Query("UPDATE conversation_history SET content = :content, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateConversationContent(id: Long, content: String, updatedAt: Long = System.currentTimeMillis())
 
     @Query("SELECT * FROM user_profile WHERE id = 1")
     fun userProfile(): Flow<UserProfile?>

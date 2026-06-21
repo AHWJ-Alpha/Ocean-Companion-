@@ -42,6 +42,7 @@ import com.projectocean.oceancompanion.R
 import com.projectocean.oceancompanion.ai.FallbackAIClient
 import com.projectocean.oceancompanion.ai.PromptEngine
 import com.projectocean.oceancompanion.agent.SharedScreenContext
+import com.projectocean.oceancompanion.memory.ConversationHistory
 import com.projectocean.oceancompanion.memory.LongTermMemory
 import com.projectocean.oceancompanion.memory.OceanDatabase
 import com.projectocean.oceancompanion.memory.PreferencesStore
@@ -83,6 +84,8 @@ class FloatingService : Service() {
     private var currentProactiveBannerOffsetDp = 12
     private var currentCompanionOpenGesture = "long_press"
     private var currentCompanionTheme = CompanionTheme.default()
+    private var currentSessionId = "session-${System.currentTimeMillis()}"
+    private var currentSessionTopic = "Ocean Companion"
     private val conversationLines = mutableListOf<String>()
     private var panelVisibleState = mutableStateOf(false)
 
@@ -566,10 +569,24 @@ class FloatingService : Service() {
     }
 
     private suspend fun loadCompanionTheme(): CompanionTheme = withContext(Dispatchers.IO) {
+        val mode = preferences.themeMode.first()
+        val animePrimary = parseColorOrNull(preferences.animePrimaryColor.first()) ?: Color.rgb(57, 197, 187)
+        val animeSecondary = parseColorOrNull(preferences.animeSecondaryColor.first()) ?: Color.rgb(0, 174, 239)
+        if (mode == "anime") return@withContext CompanionTheme.fromPalette(animePrimary, animeSecondary)
         val uriText = preferences.iconImageUri.first()
         val dominant = dominantColorFromUri(uriText) ?: return@withContext CompanionTheme.default()
         CompanionTheme.fromPrimary(dominant)
     }
+
+    private fun parseColorOrNull(value: String): Int? = runCatching {
+        val normalized = value.trim().removePrefix("#")
+        val number = normalized.toLong(16)
+        when (normalized.length) {
+            6 -> Color.rgb(((number shr 16) and 0xFF).toInt(), ((number shr 8) and 0xFF).toInt(), (number and 0xFF).toInt())
+            8 -> Color.argb(((number shr 24) and 0xFF).toInt(), ((number shr 16) and 0xFF).toInt(), ((number shr 8) and 0xFF).toInt(), (number and 0xFF).toInt())
+            else -> null
+        }
+    }.getOrNull()
 
     private fun dominantColorFromUri(uriText: String): Int? {
         if (uriText.isBlank()) return null
@@ -634,10 +651,14 @@ class FloatingService : Service() {
             if (!unlimited) maxLines = 3
             background = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
-                intArrayOf(Color.argb(230, 16, 28, 45), Color.argb(218, 25, 124, 150), Color.argb(205, 105, 115, 224))
+                intArrayOf(
+                    Color.argb(230, 16, 28, 45),
+                    withAlpha(currentCompanionTheme.primary, 222),
+                    withAlpha(currentCompanionTheme.accent, 210)
+                )
             ).apply {
                 cornerRadius = 34f
-                setStroke(2, Color.argb(155, 227, 247, 255))
+                setStroke(2, currentCompanionTheme.stroke)
             }
             elevation = 24f
             alpha = 0f
@@ -837,8 +858,32 @@ class FloatingService : Service() {
     private fun appendConversationLine(message: String, remember: Boolean) {
         conversationLines += message
         if (remember) rememberCompanionLine(message)
+        persistConversationLine(message, remember)
         if (conversationLines.size > 40) conversationLines.removeAt(0)
         refreshConversationMessages()
+    }
+
+    private fun persistConversationLine(message: String, remember: Boolean) {
+        if (!remember || message.isBlank() || message.endsWith("：正在思考...")) return
+        val role = when {
+            message.startsWith("${userName()}：") -> "user"
+            message.startsWith("${companionName()}：") -> "assistant"
+            else -> "system"
+        }
+        val content = message.substringAfter('：', message).trim().ifBlank { message.trim() }
+        if (currentSessionTopic == "Ocean Companion" && role == "user") {
+            currentSessionTopic = content.take(18).ifBlank { currentSessionTopic }
+        }
+        scope.launch(Dispatchers.IO) {
+            database.dao().insertConversation(
+                ConversationHistory(
+                    sessionId = currentSessionId,
+                    topic = currentSessionTopic,
+                    role = role,
+                    content = content
+                )
+            )
+        }
     }
 
     private fun removeThinkingLine() {
@@ -1046,10 +1091,18 @@ class FloatingService : Service() {
             }
 
             fun fromPrimary(primary: Int): CompanionTheme {
-                val accent = Color.rgb(
+                return fromPalette(primary, Color.rgb(
                     (Color.blue(primary) * 0.55f + 82).toInt().coerceIn(0, 255),
                     (Color.red(primary) * 0.45f + 92).toInt().coerceIn(0, 255),
                     (Color.green(primary) * 0.65f + 104).toInt().coerceIn(0, 255)
+                ))
+            }
+
+            fun fromPalette(primary: Int, accentColor: Int): CompanionTheme {
+                val accent = Color.rgb(
+                    Color.red(accentColor),
+                    Color.green(accentColor),
+                    Color.blue(accentColor)
                 )
                 val darkBase = Color.rgb(13, 19, 30)
                 val lightBase = Color.rgb(248, 252, 255)

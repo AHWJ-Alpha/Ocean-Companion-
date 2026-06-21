@@ -10,12 +10,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.content.FileProvider
 import com.projectocean.oceancompanion.memory.PreferencesStore
+import com.projectocean.oceancompanion.ocr.ScreenCapture
 import com.projectocean.oceancompanion.service.FloatingService
 import com.projectocean.oceancompanion.service.OCRService
-import com.projectocean.oceancompanion.ocr.ScreenCapture
 import com.projectocean.oceancompanion.ui.OceanApp
 import com.projectocean.oceancompanion.ui.theme.OceanTheme
 import com.projectocean.oceancompanion.update.UpdateChecker
@@ -23,15 +25,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.LocalDate
 
 class MainActivity : ComponentActivity() {
     private var pendingIconUri: Uri? = null
+
     private val overlayPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         startFloatingIfAllowed()
     }
+
     private val screenCapturePermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val data = result.data
         if (result.resultCode == RESULT_OK && data != null) {
@@ -40,9 +43,10 @@ class MainActivity : ComponentActivity() {
                 putExtra(OCRService.EXTRA_RESULT_CODE, result.resultCode)
                 putExtra(OCRService.EXTRA_RESULT_DATA, data)
             })
-            Toast.makeText(this, "OCR \u622a\u5c4f\u6388\u6743\u5df2\u5c31\u7eea", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "OCR 截屏授权已就绪", Toast.LENGTH_SHORT).show()
         }
     }
+
     private val filePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -51,40 +55,85 @@ class MainActivity : ComponentActivity() {
                 data = uri
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             })
-            Toast.makeText(this, "\u5df2\u9009\u62e9\u6587\u4ef6\uff0cOcean \u5c06\u5c1d\u8bd5\u8bfb\u53d6\u4e0a\u4e0b\u6587", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "已选择文件，Ocean 将尝试读取上下文", Toast.LENGTH_SHORT).show()
         }
     }
+
     private val iconPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) startIconCrop(uri)
     }
+
     private val iconCropper = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val output = pendingIconUri
         if (result.resultCode == RESULT_OK && output != null) {
             CoroutineScope(Dispatchers.Main).launch {
                 PreferencesStore(this@MainActivity).setIconImageUri(output.toString())
-                Toast.makeText(this@MainActivity, "\u60ac\u6d6e\u667a\u80fd\u4f53\u56fe\u6807\u5df2\u66f4\u65b0", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "悬浮智能体图标已更新", Toast.LENGTH_SHORT).show()
             }
         } else {
-            Toast.makeText(this, "\u672a\u5b8c\u6210\u56fe\u6807\u88c1\u5207", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "未完成图标裁切", Toast.LENGTH_SHORT).show()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            OceanTheme {
+            val store = PreferencesStore(this)
+            val themeMode by store.themeMode.collectAsState("system")
+            val animePrimary by store.animePrimaryColor.collectAsState("#39C5BB")
+            val animeSecondary by store.animeSecondaryColor.collectAsState("#00AEEF")
+            OceanTheme(
+                themeMode = themeMode,
+                animePrimaryColor = animePrimary,
+                animeSecondaryColor = animeSecondary
+            ) {
                 OceanApp(
                     onStartFloating = ::requestOverlayAndStart,
-                    onOpenAccessibility = {
-                        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                    },
+                    onOpenAccessibility = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                     onRequestScreenCapture = { screenCapturePermission.launch(ScreenCapture(this).createCaptureIntent()) },
-                    onPickFile = { filePicker.launch(arrayOf("text/*", "image/*", "application/json", "application/xml", "application/pdf", "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "*/*")) },
+                    onPickFile = {
+                        filePicker.launch(
+                            arrayOf(
+                                "text/*",
+                                "image/*",
+                                "application/json",
+                                "application/xml",
+                                "application/pdf",
+                                "application/vnd.ms-powerpoint",
+                                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                "*/*"
+                            )
+                        )
+                    },
                     onPickIconImage = { iconPicker.launch(arrayOf("image/*")) }
                 )
             }
         }
+        showWhatsNewOnce()
         checkForUpdatesQuietly()
+    }
+
+    private fun showWhatsNewOnce() {
+        CoroutineScope(Dispatchers.Main).launch {
+            val store = PreferencesStore(this@MainActivity)
+            val version = BuildConfig.VERSION_NAME
+            if (store.lastWhatsNewVersion.first() == version) return@launch
+            store.setLastWhatsNewVersion(version)
+            if (!isFinishing && !isDestroyed) {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("New! Ocean Companion $version")
+                    .setMessage(
+                        "本次更新重点：\n" +
+                            "- 新增二次元主题模式，默认蓝青色调，并支持自定义两种主题色。\n" +
+                            "- 主动弹幕和长对话窗口会跟随主题色变化。\n" +
+                            "- 设置页保存后会保留当前配置，API Key 以加密样式显示。\n" +
+                            "- 新增历史页，可按时间/主题查看、搜索和修改会话。\n" +
+                            "- 统一页面圆角、间距和对齐风格。"
+                    )
+                    .setPositiveButton("知道了", null)
+                    .show()
+            }
+        }
     }
 
     private fun checkForUpdatesQuietly() {
@@ -97,7 +146,7 @@ class MainActivity : ComponentActivity() {
             if (!isFinishing && !isDestroyed) {
                 AlertDialog.Builder(this@MainActivity)
                     .setTitle("发现新版本 ${update.latestVersion}")
-                    .setMessage(update.body.take(500).ifBlank { "检测到 Ocean Companion 有新版可用。" })
+                    .setMessage(update.body.take(500).ifBlank { "检测到 Ocean Companion 有新版本可用。" })
                     .setPositiveButton("去下载") { _, _ -> openReleasePage(update.releaseUrl) }
                     .setNegativeButton("稍后", null)
                     .show()
@@ -106,9 +155,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openReleasePage(url: String) {
-        runCatching {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        }
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
     }
 
     private fun startIconCrop(source: Uri) {
@@ -134,7 +181,7 @@ class MainActivity : ComponentActivity() {
             grantUriPermission(resolveInfo.activityInfo.packageName, outputUri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         }
         runCatching { iconCropper.launch(cropIntent) }.onFailure {
-            Toast.makeText(this, "\u5f53\u524d\u7cfb\u7edf\u6ca1\u6709\u53ef\u7528\u7684\u56fe\u7247\u88c1\u5207\u5668", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "当前系统没有可用的图片裁切器", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -161,6 +208,12 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun OceanPreview() {
     OceanTheme {
-        OceanApp(onStartFloating = {}, onOpenAccessibility = {}, onRequestScreenCapture = {}, onPickFile = {}, onPickIconImage = {})
+        OceanApp(
+            onStartFloating = {},
+            onOpenAccessibility = {},
+            onRequestScreenCapture = {},
+            onPickFile = {},
+            onPickIconImage = {}
+        )
     }
 }

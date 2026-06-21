@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,8 +29,11 @@ import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Chat
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.ScreenshotMonitor
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
@@ -65,13 +67,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.projectocean.oceancompanion.ai.ApiProfile
 import com.projectocean.oceancompanion.agent.SharedScreenContext
+import com.projectocean.oceancompanion.memory.ConversationHistory
+import com.projectocean.oceancompanion.memory.OceanDatabase
 import com.projectocean.oceancompanion.memory.PreferencesStore
+import com.projectocean.oceancompanion.ui.theme.LocalOceanAccent
+import com.projectocean.oceancompanion.ui.theme.parseOceanColor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private data class NavItem(val label: String, val icon: ImageVector)
 
@@ -87,6 +98,7 @@ fun OceanApp(
     val items = listOf(
         NavItem("Ocean", Icons.Outlined.BubbleChart),
         NavItem("\u8bc6\u5c4f", Icons.Outlined.ScreenshotMonitor),
+        NavItem("\u5386\u53f2", Icons.Outlined.History),
         NavItem("\u8bbe\u7f6e", Icons.Outlined.Settings)
     )
 
@@ -107,6 +119,7 @@ fun OceanApp(
         when (selected) {
             0 -> HomeScreen(Modifier.padding(padding), onStartFloating)
             1 -> CaptureScreen(Modifier.padding(padding), onOpenAccessibility, onRequestScreenCapture, onPickFile)
+            2 -> HistoryScreen(Modifier.padding(padding))
             else -> SettingsScreen(Modifier.padding(padding), onPickIconImage)
         }
     }
@@ -114,6 +127,7 @@ fun OceanApp(
 
 @Composable
 private fun HomeScreen(modifier: Modifier, onStartFloating: () -> Unit) {
+    val accent = LocalOceanAccent.current
     LazyColumn(
         modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -122,7 +136,7 @@ private fun HomeScreen(modifier: Modifier, onStartFloating: () -> Unit) {
             Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp), color = Color.Transparent) {
                 Box(
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(
-                        Brush.linearGradient(listOf(Color(0xFF0E6FFF), Color(0xFF00A6A6), Color(0xFFFFB23F)))
+                        Brush.linearGradient(listOf(accent.primary, accent.secondary, MaterialTheme.colorScheme.tertiary))
                     ).padding(22.dp)
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -202,6 +216,126 @@ private fun CaptureScreen(
 }
 
 @Composable
+private fun HistoryScreen(modifier: Modifier) {
+    val context = LocalContext.current
+    val dao = remember { OceanDatabase.create(context).dao() }
+    var query by remember { mutableStateOf("") }
+    var groupByTopic by remember { mutableStateOf(true) }
+    val conversations by if (query.isBlank()) {
+        dao.allConversations().collectAsState(emptyList())
+    } else {
+        dao.searchConversations(query.trim()).collectAsState(emptyList())
+    }
+    val scope = rememberCoroutineScope()
+    val grouped = remember(conversations, groupByTopic) {
+        if (groupByTopic) {
+            conversations.groupBy { it.topic.ifBlank { autoTopic(it.content) } }
+        } else {
+            conversations.groupBy { formatDay(it.createdAt) }
+        }
+    }
+
+    LazyColumn(
+        modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(Icons.Outlined.History, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Text("历史", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            }
+        }
+        item {
+            OceanCard {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ConfigField("搜索时间、主题或内容", query, leadingIcon = Icons.Outlined.Search) { query = it }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FullWidthIconButton("按主题", Icons.Outlined.Chat, { groupByTopic = true }, Modifier.weight(1f), selected = groupByTopic)
+                        FullWidthIconButton("按天数", Icons.Outlined.History, { groupByTopic = false }, Modifier.weight(1f), selected = !groupByTopic)
+                    }
+                    MutedText("长对话和导入的主动弹幕会保存在本地数据库中；修改主题或内容不会中断后续记忆继承。", small = true)
+                }
+            }
+        }
+        if (grouped.isEmpty()) {
+            item {
+                OceanCard {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("暂无历史", fontWeight = FontWeight.Bold)
+                        MutedText("打开悬浮长对话并发送消息后，这里会按主题和时间自动归档。")
+                    }
+                }
+            }
+        }
+        grouped.forEach { (title, items) ->
+            item {
+                HistoryGroupCard(
+                    title = title,
+                    items = items.sortedBy { it.createdAt },
+                    canRename = groupByTopic,
+                    onRename = { newTitle ->
+                        val sessionIds = items.map { it.sessionId }.distinct()
+                        scope.launch { sessionIds.forEach { dao.renameConversationTopic(it, newTitle.trim().ifBlank { title }) } }
+                    },
+                    onUpdateContent = { id, content ->
+                        scope.launch { dao.updateConversationContent(id, content.trim()) }
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryGroupCard(
+    title: String,
+    items: List<ConversationHistory>,
+    canRename: Boolean,
+    onRename: (String) -> Unit,
+    onUpdateContent: (Long, String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var titleDraft by remember(title) { mutableStateOf(title) }
+    OceanCard {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, fontWeight = FontWeight.Bold)
+                    MutedText("${items.size} 条 · ${formatDay(items.lastOrNull()?.createdAt ?: 0L)}", small = true)
+                }
+                OutlinedButton(onClick = { expanded = !expanded }) {
+                    Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                }
+            }
+            if (expanded) {
+                if (canRename) {
+                    ConfigField("主题名", titleDraft) { titleDraft = it.take(40) }
+                    IconTextButton("保存主题名", Icons.Outlined.Save, { onRename(titleDraft) }, Modifier.fillMaxWidth())
+                }
+                items.forEach { item ->
+                    var contentDraft by remember(item.id, item.content) { mutableStateOf(item.content) }
+                    Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.56f)) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(if (item.role == "user") "用户" else if (item.role == "assistant") "AI" else "系统", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                            ConfigField("内容", contentDraft) { contentDraft = it }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                MutedText(formatTime(item.createdAt), small = true)
+                                Spacer(Modifier.weight(1f))
+                                OutlinedButton(onClick = { onUpdateContent(item.id, contentDraft) }) {
+                                    Icon(Icons.Outlined.Save, contentDescription = null)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("保存")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     val context = LocalContext.current
     val store = remember { PreferencesStore(context) }
@@ -222,6 +356,9 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     val proactiveBannerMaxChars by store.proactiveBannerMaxChars.collectAsState(60)
     val proactiveBannerOffset by store.proactiveBannerOffsetDp.collectAsState(12)
     val companionOpenGesture by store.companionOpenGesture.collectAsState("long_press")
+    val themeMode by store.themeMode.collectAsState("system")
+    val animePrimaryColor by store.animePrimaryColor.collectAsState("#39C5BB")
+    val animeSecondaryColor by store.animeSecondaryColor.collectAsState("#00AEEF")
     var installedApps by remember { mutableStateOf(emptyList<InstalledApp>()) }
 
     var apiProfilesDraft by remember { mutableStateOf(emptyList<ApiProfile>()) }
@@ -236,9 +373,13 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     var proactiveBannerMaxCharsDraft by remember { mutableStateOf(proactiveBannerMaxChars) }
     var proactiveBannerOffsetDraft by remember { mutableStateOf(proactiveBannerOffset) }
     var companionOpenGestureDraft by remember { mutableStateOf(companionOpenGesture) }
+    var themeModeDraft by remember { mutableStateOf(themeMode) }
+    var animePrimaryColorDraft by remember { mutableStateOf(animePrimaryColor) }
+    var animeSecondaryColorDraft by remember { mutableStateOf(animeSecondaryColor) }
     var savedNotice by remember { mutableStateOf("") }
     var draftsLoaded by remember { mutableStateOf(false) }
     var apiExpanded by remember { mutableStateOf(true) }
+    var themeExpanded by remember { mutableStateOf(true) }
     var personaExpanded by remember { mutableStateOf(true) }
     var behaviorExpanded by remember { mutableStateOf(true) }
     var explainExpanded by remember { mutableStateOf(false) }
@@ -248,7 +389,7 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
         installedApps = withContext(Dispatchers.Default) { loadInstalledApps(context).take(18) }
     }
 
-    LaunchedEffect(profiles, provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive, proactiveBannerMaxChars, proactiveBannerOffset, companionOpenGesture) {
+    LaunchedEffect(profiles, provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive, proactiveBannerMaxChars, proactiveBannerOffset, companionOpenGesture, themeMode, animePrimaryColor, animeSecondaryColor) {
         if (draftsLoaded) return@LaunchedEffect
         apiProfilesDraft = profiles.ifEmpty {
             listOf(ApiProfile(label = provider.ifBlank { "OpenAI" }, provider = provider, baseUrl = apiBaseUrl, apiKey = apiKey, model = modelName))
@@ -264,6 +405,9 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
         proactiveBannerMaxCharsDraft = proactiveBannerMaxChars
         proactiveBannerOffsetDraft = proactiveBannerOffset
         companionOpenGestureDraft = companionOpenGesture
+        themeModeDraft = themeMode
+        animePrimaryColorDraft = animePrimaryColor
+        animeSecondaryColorDraft = animeSecondaryColor
         draftsLoaded = true
     }
 
@@ -275,6 +419,30 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                     Text("\u4f7f\u7528\u8bf4\u660e", fontWeight = FontWeight.Bold)
                     MutedText("\u591a API \u6309\u4e0a\u4e0b\u987a\u5e8f\u4f9d\u6b21\u5c1d\u8bd5\uff1b\u524d\u4e00\u4e2a\u65e0\u6cd5\u8fde\u901a\u6216\u8fd4\u56de\u7a7a\u6d88\u606f\u65f6\uff0cOcean \u4f1a\u81ea\u52a8\u5207\u6362\u5230\u540e\u4e00\u4e2a\u3002")
                     MutedText("\u4e00\u952e\u622a\u56fe\u5206\u6790\u4f1a\u4f18\u5148\u4f7f\u7528\u5df2\u52fe\u9009\u201c\u8bc6\u56fe\u201d\u7684\u914d\u7f6e\u3002", small = true)
+                }
+            }
+        }
+        item {
+            ExpandableSection("主题与外观", themeExpanded, { themeExpanded = !themeExpanded }) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    themeOptions.forEach { option ->
+                        FullWidthIconButton(
+                            label = option.label,
+                            icon = Icons.Outlined.Palette,
+                            selected = option.value == themeModeDraft,
+                            onClick = {
+                                themeModeDraft = option.value
+                                selectionHint = SelectionHint(option.label, option.description)
+                            }
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ColorPreview(animePrimaryColorDraft, Modifier.weight(1f))
+                        ColorPreview(animeSecondaryColorDraft, Modifier.weight(1f))
+                    }
+                    ConfigField("二次元主色 #RRGGBB", animePrimaryColorDraft) { animePrimaryColorDraft = normalizeColorInput(it) }
+                    ConfigField("二次元辅色 #RRGGBB", animeSecondaryColorDraft) { animeSecondaryColorDraft = normalizeColorInput(it) }
+                    MutedText("默认主色为 #39C5BB、辅色为 #00AEEF。自定义两种颜色后，系统会按默认蓝青色对应位置映射到主页、主动弹幕和长对话窗口。", small = true)
                 }
             }
         }
@@ -427,11 +595,14 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                                 proactiveBannerMaxChars = if (proactiveBannerMaxCharsDraft <= 0) 0 else proactiveBannerMaxCharsDraft.coerceIn(20, 200),
                                 proactiveBannerOffsetDp = proactiveBannerOffsetDraft.coerceIn(0, 160),
                                 companionOpenGesture = companionOpenGestureDraft,
+                                themeMode = themeModeDraft,
+                                animePrimaryColor = animePrimaryColorDraft.ifBlank { "#39C5BB" },
+                                animeSecondaryColor = animeSecondaryColorDraft.ifBlank { "#00AEEF" },
                                 apiProfiles = cleanedProfiles
                             )
                             apiProfilesDraft = cleanedProfiles
                             savedNotice = "\u8bbe\u7f6e\u5df2\u4fdd\u5b58\uff0c\u7f16\u8f91\u5206\u7ec4\u5df2\u81ea\u52a8\u6536\u8d77"
-                            apiExpanded = false; personaExpanded = false; behaviorExpanded = false
+                            apiExpanded = false; themeExpanded = false; personaExpanded = false; behaviorExpanded = false
                         }
                     }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Outlined.Save, contentDescription = null)
@@ -473,6 +644,8 @@ private data class PersonaPreset(val label: String, val prompt: String)
 private data class SelectionHint(val title: String, val body: String)
 
 private data class CompanionGestureOption(val label: String, val value: String, val description: String)
+
+private data class ThemeOption(val label: String, val value: String, val description: String)
 
 @Composable
 private fun OceanCard(content: @Composable () -> Unit) {
@@ -596,6 +769,22 @@ private fun SelectionHintCard(hint: SelectionHint) {
     }
 }
 
+@Composable
+private fun ColorPreview(value: String, modifier: Modifier = Modifier) {
+    val color = parseOceanColor(value, MaterialTheme.colorScheme.primary)
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(8.dp),
+        color = color.copy(alpha = 0.22f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.72f))
+    ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(Modifier.size(24.dp).clip(CircleShape).background(color))
+            Text(value.ifBlank { "#39C5BB" }, maxLines = 1, color = MaterialTheme.colorScheme.onSurface)
+        }
+    }
+}
+
 private fun ProviderPreset.toApiProfile(): ApiProfile = ApiProfile(
     label = label,
     provider = provider,
@@ -629,6 +818,13 @@ private val companionGestureOptions = listOf(
     CompanionGestureOption("\u5173\u95ed\u60ac\u6d6e\u7403\u547c\u51fa", "disabled", "\u60ac\u6d6e\u7403\u4e0d\u518d\u76f4\u63a5\u547c\u51fa\u957f\u5bf9\u8bdd\uff0c\u53ea\u4fdd\u7559\u4e3b\u52a8\u5f39\u5e55\u70b9\u51fb\u5bfc\u5165\u3002")
 )
 
+private val themeOptions = listOf(
+    ThemeOption("跟随系统黑白模式", "system", "应用会自动跟随系统浅色/深色模式。"),
+    ThemeOption("浅色模式", "light", "固定使用明亮、清爽的界面。"),
+    ThemeOption("深色模式", "dark", "固定使用深色背景，适合夜间。"),
+    ThemeOption("二次元模式", "anime", "使用蓝青双色主题，并映射到主动弹幕与长对话窗口。")
+)
+
 private fun loadInstalledApps(context: Context): List<InstalledApp> {
     val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
     return context.packageManager.queryIntentActivities(intent, 0)
@@ -638,7 +834,13 @@ private fun loadInstalledApps(context: Context): List<InstalledApp> {
 }
 
 @Composable
-private fun ConfigField(label: String, value: String, onChange: (String) -> Unit) {
+private fun ConfigField(
+    label: String,
+    value: String,
+    leadingIcon: ImageVector? = null,
+    password: Boolean = label == "API Key",
+    onChange: (String) -> Unit
+) {
     var text by remember(value) { mutableStateOf(value) }
     OutlinedTextField(
         modifier = Modifier.fillMaxWidth(),
@@ -647,9 +849,29 @@ private fun ConfigField(label: String, value: String, onChange: (String) -> Unit
             text = it
             onChange(it)
         },
+        leadingIcon = leadingIcon?.let { icon -> { Icon(icon, contentDescription = null) } },
         label = { Text(label) },
-        singleLine = label != "\u4eba\u683c\u63d0\u793a\u8bcd"
+        singleLine = label != "\u4eba\u683c\u63d0\u793a\u8bcd" && label != "内容",
+        visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None
     )
+}
+
+private fun normalizeColorInput(value: String): String {
+    val filtered = value.trim().uppercase(Locale.ROOT).filter { it == '#' || it in '0'..'9' || it in 'A'..'F' }
+    val withoutHash = filtered.removePrefix("#").take(6)
+    return if (withoutHash.isBlank()) "#" else "#$withoutHash"
+}
+
+private fun autoTopic(content: String): String = content.trim().lineSequence().firstOrNull().orEmpty().take(18).ifBlank { "Ocean Companion" }
+
+private fun formatDay(timestamp: Long): String {
+    if (timestamp <= 0L) return "未知日期"
+    return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(timestamp))
+}
+
+private fun formatTime(timestamp: Long): String {
+    if (timestamp <= 0L) return "-"
+    return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
 }
 
 private fun openPackage(context: Context, packageName: String) {

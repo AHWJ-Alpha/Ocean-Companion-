@@ -13,8 +13,8 @@ android {
         applicationId = "com.projectocean.oceancompanion"
         minSdk = 26
         targetSdk = 35
-        versionCode = 43
-        versionName = "4.3"
+        versionCode = 50
+        versionName = "5.0"
     }
 
     buildTypes {
