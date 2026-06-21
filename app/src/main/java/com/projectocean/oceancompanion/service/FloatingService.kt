@@ -54,6 +54,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class FloatingService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -79,6 +80,8 @@ class FloatingService : Service() {
     private var currentUserName = "\u4f60"
     private var currentCompanionName = "Ocean"
     private var currentProactiveBannerMaxChars = 60
+    private var currentProactiveBannerOffsetDp = 12
+    private var currentCompanionOpenGesture = "long_press"
     private var currentCompanionTheme = CompanionTheme.default()
     private val conversationLines = mutableListOf<String>()
     private var panelVisibleState = mutableStateOf(false)
@@ -91,6 +94,8 @@ class FloatingService : Service() {
         scope.launch { preferences.userName.collect { currentUserName = it.ifBlank { "\u4f60" } } }
         scope.launch { preferences.companionName.collect { currentCompanionName = it.ifBlank { "Ocean" } } }
         scope.launch { preferences.proactiveBannerMaxChars.collect { currentProactiveBannerMaxChars = it } }
+        scope.launch { preferences.proactiveBannerOffsetDp.collect { currentProactiveBannerOffsetDp = it.coerceIn(0, 160) } }
+        scope.launch { preferences.companionOpenGesture.collect { currentCompanionOpenGesture = it.ifBlank { "long_press" } } }
         if (Settings.canDrawOverlays(this)) showBubble()
         startAutoSpeechScheduler()
     }
@@ -175,10 +180,12 @@ class FloatingService : Service() {
         var dragging = false
         var longPressTriggered = false
         var longPressJob: Job? = null
+        var singleTapJob: Job? = null
         val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
         view.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
+                    singleTapJob?.cancel()
                     startX = params.x
                     startY = params.y
                     touchX = event.rawX
@@ -186,11 +193,13 @@ class FloatingService : Service() {
                     dragging = false
                     longPressTriggered = false
                     longPressJob?.cancel()
-                    longPressJob = scope.launch {
-                        delay(ViewConfiguration.getLongPressTimeout().toLong())
-                        if (!dragging && bubble === view) {
-                            longPressTriggered = true
-                            toggleCompanionPanel()
+                    if (currentCompanionOpenGesture == "long_press") {
+                        longPressJob = scope.launch {
+                            delay(ViewConfiguration.getLongPressTimeout().toLong())
+                            if (!dragging && bubble === view) {
+                                longPressTriggered = true
+                                toggleCompanionPanel()
+                            }
                         }
                     }
                     true
@@ -224,15 +233,33 @@ class FloatingService : Service() {
                     }
                     val now = System.currentTimeMillis()
                     if (now - lastTap < 320) {
-                        speak("\u5df2\u52a0\u5165\u5feb\u901f\u8bc6\u5c4f\u5206\u6790\u961f\u5217\u3002")
+                        singleTapJob?.cancel()
+                        if (currentCompanionOpenGesture == "double_tap") {
+                            toggleCompanionPanel()
+                        } else {
+                            speak("\u5df2\u52a0\u5165\u5feb\u901f\u8bc6\u5c4f\u5206\u6790\u961f\u5217\u3002")
+                        }
                     } else {
-                        speak("${companionName()}\uff1a\u8981\u6211\u5206\u6790\u5f53\u524d\u5185\u5bb9\u5417\uff1f")
+                        val gesture = currentCompanionOpenGesture
+                        if (gesture == "single_tap") {
+                            toggleCompanionPanel()
+                        } else if (gesture == "double_tap") {
+                            singleTapJob = scope.launch {
+                                delay(330)
+                                if (currentCompanionOpenGesture == "double_tap") {
+                                    Toast.makeText(this@FloatingService, "${companionName()}\uff1a\u53cc\u51fb\u53ef\u6253\u5f00\u957f\u5bf9\u8bdd\u3002", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        } else {
+                            speak("${companionName()}\uff1a\u8981\u6211\u5206\u6790\u5f53\u524d\u5185\u5bb9\u5417\uff1f")
+                        }
                     }
                     lastTap = now
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     longPressJob?.cancel()
+                    singleTapJob?.cancel()
                     dragging = false
                     longPressTriggered = false
                     true
@@ -345,12 +372,13 @@ class FloatingService : Service() {
             setTextColor(theme.textPrimary)
         }
         val close = AndroidButton(this).apply {
-            text = "\u00d7"
-            textSize = 18f
+            text = "\u2304"
+            contentDescription = "\u6536\u8d77\u957f\u5bf9\u8bdd"
+            textSize = 22f
             setTextColor(theme.textPrimary)
             background = GradientDrawable().apply {
-                setColor(theme.softOverlay)
-                cornerRadius = 28f
+                setColor(Color.TRANSPARENT)
+                cornerRadius = 18f
                 setStroke(1, theme.stroke)
             }
             setOnClickListener { toggleCompanionPanel() }
@@ -408,8 +436,9 @@ class FloatingService : Service() {
             }
         }
         val send = AndroidButton(this).apply {
-            setText("\u2192")
-            textSize = 22f
+            setText("\u27a4")
+            contentDescription = "\u53d1\u9001\u6d88\u606f"
+            textSize = 20f
             setTextColor(Color.WHITE)
             background = GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT,
@@ -457,36 +486,41 @@ class FloatingService : Service() {
     private fun startAutoSpeechScheduler() {
         schedulerJob = scope.launch {
             while (true) {
-                val enabled = preferences.proactiveReminders.first()
-                if (enabled) {
-                    val triggerApps = preferences.triggerAppNames.first().ifBlank { "\u5b66\u4e60,PDF,PPT,Word,Chrome" }
-                    val currentPackage = resolveCurrentPackage()
-                    val now = System.currentTimeMillis()
-                    val matchedApp = currentPackage.isNotBlank() && matchesTriggerApp(currentPackage, triggerApps)
-                    val enteredMatchedApp = matchedApp && currentPackage != lastTriggeredPackage
-                    val canImmediateSpeak = now - lastImmediateSpeakAt > IMMEDIATE_APP_COOLDOWN_MS
-                    if (enteredMatchedApp && canImmediateSpeak) {
-                        lastTriggeredPackage = currentPackage
-                        lastSeenPackage = currentPackage
-                        lastImmediateSpeakAt = now
-                        showProactiveBanner(generateCompanionLine(triggerApps, reason = "app_enter", packageName = currentPackage))
-                    } else if (currentPackage.isNotBlank()) {
-                        lastSeenPackage = currentPackage
-                    }
-
-                    val minutes = preferences.speechIntervalMinutes.first().coerceIn(1, 120)
-                    val routineDue = now - lastRoutineSpeakAt >= minutes * 60_000L
-                    if (routineDue && currentPackage.isBlank()) {
-                        lastRoutineSpeakAt = now
-                        showProactiveBanner(generateCompanionLine(triggerApps, reason = "routine_check", packageName = currentPackage))
-                    }
-
-                    if (currentPackage.isBlank() || !matchedApp) {
-                        lastTriggeredPackage = ""
-                    }
-                }
+                runCatching { checkAutoSpeechOnce() }
                 delay(ACTIVE_APP_CHECK_INTERVAL_MS)
             }
+        }
+    }
+
+    private suspend fun checkAutoSpeechOnce() = withContext(Dispatchers.Default) {
+        val enabled = preferences.proactiveReminders.first()
+        if (!enabled) return@withContext
+        val triggerApps = preferences.triggerAppNames.first().ifBlank { "\u5b66\u4e60,PDF,PPT,Word,Chrome" }
+        val currentPackage = resolveCurrentPackage()
+        val now = System.currentTimeMillis()
+        val matchedApp = currentPackage.isNotBlank() && matchesTriggerApp(currentPackage, triggerApps)
+        val enteredMatchedApp = matchedApp && currentPackage != lastTriggeredPackage
+        val canImmediateSpeak = now - lastImmediateSpeakAt > IMMEDIATE_APP_COOLDOWN_MS
+        if (enteredMatchedApp && canImmediateSpeak) {
+            lastTriggeredPackage = currentPackage
+            lastSeenPackage = currentPackage
+            lastImmediateSpeakAt = now
+            val line = generateCompanionLine(triggerApps, reason = "app_enter", packageName = currentPackage)
+            withContext(Dispatchers.Main) { showProactiveBanner(line) }
+        } else if (currentPackage.isNotBlank()) {
+            lastSeenPackage = currentPackage
+        }
+
+        val minutes = preferences.speechIntervalMinutes.first().coerceIn(1, 120)
+        val routineDue = now - lastRoutineSpeakAt >= minutes * 60_000L
+        if (routineDue && currentPackage.isBlank()) {
+            lastRoutineSpeakAt = now
+            val line = generateCompanionLine(triggerApps, reason = "routine_check", packageName = currentPackage)
+            withContext(Dispatchers.Main) { showProactiveBanner(line) }
+        }
+
+        if (currentPackage.isBlank() || !matchedApp) {
+            lastTriggeredPackage = ""
         }
     }
 
@@ -531,10 +565,10 @@ class FloatingService : Service() {
         }.getOrDefault("")
     }
 
-    private suspend fun loadCompanionTheme(): CompanionTheme {
+    private suspend fun loadCompanionTheme(): CompanionTheme = withContext(Dispatchers.IO) {
         val uriText = preferences.iconImageUri.first()
-        val dominant = dominantColorFromUri(uriText) ?: return CompanionTheme.default()
-        return CompanionTheme.fromPrimary(dominant)
+        val dominant = dominantColorFromUri(uriText) ?: return@withContext CompanionTheme.default()
+        CompanionTheme.fromPrimary(dominant)
     }
 
     private fun dominantColorFromUri(uriText: String): Int? {
@@ -664,13 +698,15 @@ class FloatingService : Service() {
 
     private fun bannerX(width: Int): Int {
         val screenWidth = resources.displayMetrics.widthPixels
-        val desired = bubbleX + 96
+        val offset = (currentProactiveBannerOffsetDp * resources.displayMetrics.density).toInt()
+        val desired = bubbleX + 96 + offset
         return desired.coerceIn(12, (screenWidth - width - 12).coerceAtLeast(12))
     }
 
     private fun bannerY(): Int {
         val screenHeight = resources.displayMetrics.heightPixels
-        return (bubbleY + 8).coerceIn(32, (screenHeight - 220).coerceAtLeast(32))
+        val offset = (currentProactiveBannerOffsetDp * resources.displayMetrics.density * 0.35f).toInt()
+        return (bubbleY + 8 + offset).coerceIn(32, (screenHeight - 220).coerceAtLeast(32))
     }
 
     private fun importVisibleProactiveLine() {

@@ -1,5 +1,6 @@
 package com.projectocean.oceancompanion
 
+import android.app.AlertDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -17,10 +18,14 @@ import com.projectocean.oceancompanion.service.OCRService
 import com.projectocean.oceancompanion.ocr.ScreenCapture
 import com.projectocean.oceancompanion.ui.OceanApp
 import com.projectocean.oceancompanion.ui.theme.OceanTheme
+import com.projectocean.oceancompanion.update.UpdateChecker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.time.LocalDate
 
 class MainActivity : ComponentActivity() {
     private var pendingIconUri: Uri? = null
@@ -78,6 +83,31 @@ class MainActivity : ComponentActivity() {
                     onPickIconImage = { iconPicker.launch(arrayOf("image/*")) }
                 )
             }
+        }
+        checkForUpdatesQuietly()
+    }
+
+    private fun checkForUpdatesQuietly() {
+        CoroutineScope(Dispatchers.Main).launch {
+            val store = PreferencesStore(this@MainActivity)
+            val today = LocalDate.now().toString()
+            if (store.lastUpdatePromptDay.first() == today) return@launch
+            val update = UpdateChecker().checkLatest() ?: return@launch
+            store.setLastUpdatePromptDay(today)
+            if (!isFinishing && !isDestroyed) {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("发现新版本 ${update.latestVersion}")
+                    .setMessage(update.body.take(500).ifBlank { "检测到 Ocean Companion 有新版可用。" })
+                    .setPositiveButton("去下载") { _, _ -> openReleasePage(update.releaseUrl) }
+                    .setNegativeButton("稍后", null)
+                    .show()
+            }
+        }
+    }
+
+    private fun openReleasePage(url: String) {
+        runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }
     }
 

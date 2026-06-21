@@ -29,6 +29,9 @@ class PreferencesStore(private val context: Context) {
     val panelRatio = context.dataStore.data.map { it[Keys.PanelRatio] ?: 0.5f }
     val proactiveReminders = context.dataStore.data.map { it[Keys.ProactiveReminders] ?: true }
     val proactiveBannerMaxChars = context.dataStore.data.map { it[Keys.ProactiveBannerMaxChars] ?: 60 }
+    val proactiveBannerOffsetDp = context.dataStore.data.map { it[Keys.ProactiveBannerOffsetDp] ?: 12 }
+    val companionOpenGesture = context.dataStore.data.map { it[Keys.CompanionOpenGesture] ?: "long_press" }
+    val lastUpdatePromptDay = context.dataStore.data.map { it[Keys.LastUpdatePromptDay] ?: "" }
     val apiProfilesJson = context.dataStore.data.map { it[Keys.ApiProfilesJson] ?: "" }
     val apiProfiles = context.dataStore.data.map { prefs ->
         val saved = ApiProfile.decode(prefs[Keys.ApiProfilesJson].orEmpty())
@@ -62,6 +65,9 @@ class PreferencesStore(private val context: Context) {
     suspend fun setPanelRatio(value: Float) = context.dataStore.edit { it[Keys.PanelRatio] = value }
     suspend fun setProactiveReminders(value: Boolean) = context.dataStore.edit { it[Keys.ProactiveReminders] = value }
     suspend fun setProactiveBannerMaxChars(value: Int) = context.dataStore.edit { it[Keys.ProactiveBannerMaxChars] = value }
+    suspend fun setProactiveBannerOffsetDp(value: Int) = context.dataStore.edit { it[Keys.ProactiveBannerOffsetDp] = value }
+    suspend fun setCompanionOpenGesture(value: String) = context.dataStore.edit { it[Keys.CompanionOpenGesture] = value }
+    suspend fun setLastUpdatePromptDay(value: String) = context.dataStore.edit { it[Keys.LastUpdatePromptDay] = value }
     suspend fun setApiProfiles(value: List<ApiProfile>) = context.dataStore.edit { it[Keys.ApiProfilesJson] = ApiProfile.encode(value) }
 
     suspend fun resolvedApiProfiles(): List<ApiProfile> = apiProfiles.first()
@@ -79,7 +85,9 @@ class PreferencesStore(private val context: Context) {
         speechIntervalMinutes: Int,
         panelRatio: Float,
         proactiveReminders: Boolean,
-        proactiveBannerMaxChars: Int = 60
+        proactiveBannerMaxChars: Int = 60,
+        proactiveBannerOffsetDp: Int = 12,
+        companionOpenGesture: String = "long_press"
     ) = saveSettings(
         provider = provider,
         apiBaseUrl = apiBaseUrl,
@@ -94,6 +102,8 @@ class PreferencesStore(private val context: Context) {
         panelRatio = panelRatio,
         proactiveReminders = proactiveReminders,
         proactiveBannerMaxChars = proactiveBannerMaxChars,
+        proactiveBannerOffsetDp = proactiveBannerOffsetDp,
+        companionOpenGesture = companionOpenGesture,
         apiProfiles = listOf(
             ApiProfile(
                 label = provider.ifBlank { "OpenAI" },
@@ -119,6 +129,8 @@ class PreferencesStore(private val context: Context) {
         panelRatio: Float,
         proactiveReminders: Boolean,
         proactiveBannerMaxChars: Int = 60,
+        proactiveBannerOffsetDp: Int = 12,
+        companionOpenGesture: String = "long_press",
         apiProfiles: List<ApiProfile>
     ) = context.dataStore.edit {
         it[Keys.Provider] = provider
@@ -135,6 +147,8 @@ class PreferencesStore(private val context: Context) {
         it[Keys.PanelRatio] = panelRatio
         it[Keys.ProactiveReminders] = proactiveReminders
         it[Keys.ProactiveBannerMaxChars] = proactiveBannerMaxChars
+        it[Keys.ProactiveBannerOffsetDp] = proactiveBannerOffsetDp
+        it[Keys.CompanionOpenGesture] = companionOpenGesture
     }
 
     private object Keys {
@@ -153,6 +167,9 @@ class PreferencesStore(private val context: Context) {
         val PanelRatio = floatPreferencesKey("panel_ratio")
         val ProactiveReminders = booleanPreferencesKey("proactive_reminders")
         val ProactiveBannerMaxChars = intPreferencesKey("proactive_banner_max_chars")
+        val ProactiveBannerOffsetDp = intPreferencesKey("proactive_banner_offset_dp")
+        val CompanionOpenGesture = stringPreferencesKey("companion_open_gesture")
+        val LastUpdatePromptDay = stringPreferencesKey("last_update_prompt_day")
         val ApiProfilesJson = stringPreferencesKey("api_profiles_json")
     }
 }

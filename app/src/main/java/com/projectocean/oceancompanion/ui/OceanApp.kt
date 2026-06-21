@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -26,6 +28,7 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Chat
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Save
@@ -66,7 +69,9 @@ import androidx.compose.ui.unit.dp
 import com.projectocean.oceancompanion.ai.ApiProfile
 import com.projectocean.oceancompanion.agent.SharedScreenContext
 import com.projectocean.oceancompanion.memory.PreferencesStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private data class NavItem(val label: String, val icon: ImageVector)
 
@@ -215,7 +220,9 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     val panelRatio by store.panelRatio.collectAsState(0.5f)
     val proactive by store.proactiveReminders.collectAsState(true)
     val proactiveBannerMaxChars by store.proactiveBannerMaxChars.collectAsState(60)
-    val installedApps = remember { loadInstalledApps(context).take(18) }
+    val proactiveBannerOffset by store.proactiveBannerOffsetDp.collectAsState(12)
+    val companionOpenGesture by store.companionOpenGesture.collectAsState("long_press")
+    var installedApps by remember { mutableStateOf(emptyList<InstalledApp>()) }
 
     var apiProfilesDraft by remember { mutableStateOf(emptyList<ApiProfile>()) }
     var userNameDraft by remember { mutableStateOf(userName) }
@@ -227,6 +234,8 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     var panelRatioDraft by remember { mutableStateOf(panelRatio) }
     var proactiveDraft by remember { mutableStateOf(proactive) }
     var proactiveBannerMaxCharsDraft by remember { mutableStateOf(proactiveBannerMaxChars) }
+    var proactiveBannerOffsetDraft by remember { mutableStateOf(proactiveBannerOffset) }
+    var companionOpenGestureDraft by remember { mutableStateOf(companionOpenGesture) }
     var savedNotice by remember { mutableStateOf("") }
     var draftsLoaded by remember { mutableStateOf(false) }
     var apiExpanded by remember { mutableStateOf(true) }
@@ -235,7 +244,11 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
     var explainExpanded by remember { mutableStateOf(false) }
     var selectionHint by remember { mutableStateOf<SelectionHint?>(null) }
 
-    LaunchedEffect(profiles, provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive, proactiveBannerMaxChars) {
+    LaunchedEffect(Unit) {
+        installedApps = withContext(Dispatchers.Default) { loadInstalledApps(context).take(18) }
+    }
+
+    LaunchedEffect(profiles, provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive, proactiveBannerMaxChars, proactiveBannerOffset, companionOpenGesture) {
         if (draftsLoaded) return@LaunchedEffect
         apiProfilesDraft = profiles.ifEmpty {
             listOf(ApiProfile(label = provider.ifBlank { "OpenAI" }, provider = provider, baseUrl = apiBaseUrl, apiKey = apiKey, model = modelName))
@@ -249,6 +262,8 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
         panelRatioDraft = panelRatio
         proactiveDraft = proactive
         proactiveBannerMaxCharsDraft = proactiveBannerMaxChars
+        proactiveBannerOffsetDraft = proactiveBannerOffset
+        companionOpenGestureDraft = companionOpenGesture
         draftsLoaded = true
     }
 
@@ -267,24 +282,19 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
             ExpandableSection("AI API \u4e0e\u8bc6\u56fe\u6a21\u578b", apiExpanded, { apiExpanded = !apiExpanded }) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     selectionHint?.let { SelectionHintCard(it) }
-                    providerPresets.chunked(2).forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            row.forEach { preset ->
-                                OutlinedButton(onClick = {
-                                    apiProfilesDraft = apiProfilesDraft + preset.toApiProfile()
-                                    apiExpanded = true
-                                    selectionHint = SelectionHint(
-                                        preset.label,
-                                        "\u5df2\u6dfb\u52a0 ${preset.label}\uff1a\u9ed8\u8ba4\u5730\u5740\u4e3a ${preset.baseUrl}\uff0c\u6a21\u578b\u4e3a ${preset.model}\u3002API Key \u4ecd\u9700\u4f60\u81ea\u5df1\u586b\u5199\u3002"
-                                    )
-                                }, modifier = Modifier.weight(1f)) {
-                                    Icon(Icons.Outlined.Add, contentDescription = null)
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(preset.label, maxLines = 1)
-                                }
+                    providerPresets.forEach { preset ->
+                        FullWidthIconButton(
+                            label = preset.label,
+                            icon = Icons.Outlined.Add,
+                            onClick = {
+                                apiProfilesDraft = apiProfilesDraft + preset.toApiProfile()
+                                apiExpanded = true
+                                selectionHint = SelectionHint(
+                                    preset.label,
+                                    "\u5df2\u6dfb\u52a0 ${preset.label}\uff1a\u9ed8\u8ba4\u5730\u5740\u4e3a ${preset.baseUrl}\uff0c\u6a21\u578b\u4e3a ${preset.model}\u3002API Key \u4ecd\u9700\u4f60\u81ea\u5df1\u586b\u5199\u3002"
+                                )
                             }
-                            if (row.size == 1) Spacer(Modifier.weight(1f))
-                        }
+                        )
                     }
                     if (apiProfilesDraft.isEmpty()) MutedText("\u6682\u65e0 API \u914d\u7f6e\uff0c\u8bf7\u5148\u70b9\u4e0a\u65b9\u9884\u8bbe\u6dfb\u52a0\u4e00\u4e2a\u3002")
                     apiProfilesDraft.forEachIndexed { index, profile ->
@@ -316,16 +326,15 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                     ConfigField("AI \u4f19\u4f34\u540d\u79f0", companionNameDraft) { companionNameDraft = it.take(20) }
                     ConfigField("\u60ac\u6d6e\u7403\u56fe\u6807\u6587\u5b57", iconTextDraft) { iconTextDraft = it.take(8) }
                     IconTextButton("\u4e0a\u4f20\u5e76\u88c1\u5207\u56fe\u6807", Icons.Outlined.Image, onPickIconImage, Modifier.fillMaxWidth())
-                    personaPresets.chunked(2).forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            row.forEach { preset ->
-                                OutlinedButton(onClick = {
-                                    personaPromptDraft = preset.prompt
-                                    selectionHint = SelectionHint(preset.label, "\u5df2\u5957\u7528 ${preset.label}\uff1a\u4e0b\u6b21\u957f\u5bf9\u8bdd\u548c\u4e3b\u52a8\u53d1\u8a00\u4f1a\u6309\u8fd9\u4e2a\u98ce\u683c\u751f\u6210\u3002")
-                                }, modifier = Modifier.weight(1f)) { Text(preset.label, maxLines = 1) }
+                    personaPresets.forEach { preset ->
+                        FullWidthIconButton(
+                            label = preset.label,
+                            icon = Icons.Outlined.Chat,
+                            onClick = {
+                                personaPromptDraft = preset.prompt
+                                selectionHint = SelectionHint(preset.label, "\u5df2\u5957\u7528 ${preset.label}\uff1a\u4e0b\u6b21\u957f\u5bf9\u8bdd\u548c\u4e3b\u52a8\u53d1\u8a00\u4f1a\u6309\u8fd9\u4e2a\u98ce\u683c\u751f\u6210\u3002")
                             }
-                            if (row.size == 1) Spacer(Modifier.weight(1f))
-                        }
+                        )
                     }
                     ConfigField("\u4eba\u683c\u63d0\u793a\u8bcd", personaPromptDraft) { personaPromptDraft = it }
                 }
@@ -358,21 +367,39 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                     } else {
                         MutedText("\u5f53\u524d\u4e3a\u4e0d\u9650\u5236\uff1a\u4e3b\u52a8\u5f39\u5e55\u4f1a\u5b8c\u6574\u663e\u793a AI \u8f93\u51fa\uff0c\u4e0d\u4f1a\u622a\u65ad\u3002", small = true)
                     }
+                    Text("\u5f39\u5e55\u8ddd\u79bb\u60ac\u6d6e\u7403\uff1a${proactiveBannerOffsetDraft.coerceIn(0, 160)} dp")
+                    Slider(
+                        value = proactiveBannerOffsetDraft.coerceIn(0, 160).toFloat(),
+                        onValueChange = { proactiveBannerOffsetDraft = it.toInt().coerceIn(0, 160) },
+                        valueRange = 0f..160f
+                    )
+                    MutedText("\u8ddd\u79bb\u8d8a\u5927\uff0c\u5f39\u5e55\u8d8a\u4e0d\u5bb9\u6613\u6321\u4f4f\u60ac\u6d6e\u7403\u9644\u8fd1\u7684\u64cd\u4f5c\u3002", small = true)
+                    Text("\u957f\u5bf9\u8bdd\u547c\u51fa\u65b9\u5f0f", fontWeight = FontWeight.SemiBold)
+                    companionGestureOptions.forEach { option ->
+                        FullWidthIconButton(
+                            label = option.label,
+                            icon = if (option.value == companionOpenGestureDraft) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.Chat,
+                            selected = option.value == companionOpenGestureDraft,
+                            onClick = {
+                                companionOpenGestureDraft = option.value
+                                selectionHint = SelectionHint(option.label, option.description)
+                            }
+                        )
+                    }
                     Text("\u53d1\u8a00\u95f4\u9694\uff1a${speechIntervalDraft} \u5206\u949f")
                     Slider(value = speechIntervalDraft.toFloat(), onValueChange = { speechIntervalDraft = it.toInt().coerceIn(1, 120) }, valueRange = 1f..120f)
                     Text("\u4f34\u968f\u9762\u677f\u5360\u5c4f\u6bd4\u4f8b\uff1a${(panelRatioDraft * 100).toInt()}%")
                     Slider(value = panelRatioDraft, onValueChange = { panelRatioDraft = it.coerceIn(0.35f, 0.8f) }, valueRange = 0.35f..0.8f)
                     MutedText("\u5e94\u7528\u5feb\u901f\u9009\u62e9", small = true)
-                    installedApps.chunked(2).forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            row.forEach { app ->
-                                OutlinedButton(onClick = {
-                                    triggerAppsDraft = listOf(triggerAppsDraft, app.label).filter { it.isNotBlank() }.joinToString(",")
-                                    selectionHint = SelectionHint(app.label, "\u5df2\u5c06 ${app.label} \u52a0\u5165\u81ea\u52a8\u89e6\u53d1\u5173\u952e\u8bcd\uff1a\u8fdb\u5165\u547d\u4e2d\u5e94\u7528\u65f6\u4f1a\u7acb\u5373\u751f\u6210\u4e00\u6761\u72ec\u7acb\u5f39\u5e55\u3002")
-                                }, modifier = Modifier.weight(1f)) { Text(app.label, maxLines = 1) }
+                    installedApps.forEach { app ->
+                        FullWidthIconButton(
+                            label = app.label,
+                            icon = Icons.Outlined.Add,
+                            onClick = {
+                                triggerAppsDraft = listOf(triggerAppsDraft, app.label).filter { it.isNotBlank() }.joinToString(",")
+                                selectionHint = SelectionHint(app.label, "\u5df2\u5c06 ${app.label} \u52a0\u5165\u81ea\u52a8\u89e6\u53d1\u5173\u952e\u8bcd\uff1a\u8fdb\u5165\u547d\u4e2d\u5e94\u7528\u65f6\u4f1a\u7acb\u5373\u751f\u6210\u4e00\u6761\u72ec\u7acb\u5f39\u5e55\u3002")
                             }
-                            if (row.size == 1) Spacer(Modifier.weight(1f))
-                        }
+                        )
                     }
                 }
             }
@@ -398,6 +425,8 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit) {
                                 panelRatio = panelRatioDraft.coerceIn(0.35f, 0.8f),
                                 proactiveReminders = proactiveDraft,
                                 proactiveBannerMaxChars = if (proactiveBannerMaxCharsDraft <= 0) 0 else proactiveBannerMaxCharsDraft.coerceIn(20, 200),
+                                proactiveBannerOffsetDp = proactiveBannerOffsetDraft.coerceIn(0, 160),
+                                companionOpenGesture = companionOpenGestureDraft,
                                 apiProfiles = cleanedProfiles
                             )
                             apiProfilesDraft = cleanedProfiles
@@ -443,6 +472,8 @@ private data class PersonaPreset(val label: String, val prompt: String)
 
 private data class SelectionHint(val title: String, val body: String)
 
+private data class CompanionGestureOption(val label: String, val value: String, val description: String)
+
 @Composable
 private fun OceanCard(content: @Composable () -> Unit) {
     Card(
@@ -472,6 +503,28 @@ private fun IconTextButton(
         Icon(icon, contentDescription = null)
         Spacer(Modifier.width(8.dp))
         Text(label, maxLines = 1)
+    }
+}
+
+@Composable
+private fun FullWidthIconButton(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false
+) {
+    val scroll = rememberScrollState()
+    OutlinedButton(onClick = onClick, modifier = modifier.fillMaxWidth()) {
+        Icon(icon, contentDescription = null)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f).horizontalScroll(scroll),
+            maxLines = 1,
+            softWrap = false,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+        )
     }
 }
 
@@ -567,6 +620,13 @@ private val personaPresets = listOf(
     PersonaPreset("\u5b66\u59d0\u6a21\u5f0f", "\u4f60\u662f\u6e29\u548c\u4f46\u6709\u4e3b\u89c1\u7684\u5b66\u59d0\uff0c\u8bf4\u8bdd\u81ea\u7136\u3001\u9f13\u52b1\u7528\u6237\uff0c\u9047\u5230\u5b66\u4e60\u95ee\u9898\u4f1a\u5e26\u7740\u5bf9\u65b9\u4e00\u8d77\u68b3\u7406\u3002"),
     PersonaPreset("\u6280\u672f\u5b85\u6a21\u5f0f", "\u4f60\u662f\u6280\u672f\u578b\u4f19\u4f34\uff0c\u504f\u7406\u6027\u3001\u559c\u6b22\u7ed9\u51fa\u53ef\u6267\u884c\u65b9\u6848\uff0c\u53ef\u4ee5\u7b80\u77ed\u5410\u69fd\u4f46\u4e0d\u5f71\u54cd\u6e05\u6670\u5ea6\u3002"),
     PersonaPreset("\u7b80\u6d01\u52a9\u624b", "\u4f60\u662f\u6781\u7b80\u98ce\u683c\u7684 AI \u52a9\u624b\uff0c\u4f18\u5148\u7ed9\u51fa\u7ed3\u8bba\u548c\u884c\u52a8\u9879\uff0c\u6bcf\u6b21\u56de\u590d\u5c3d\u91cf\u63a7\u5236\u5728\u4e09\u5230\u516d\u53e5\u3002")
+)
+
+private val companionGestureOptions = listOf(
+    CompanionGestureOption("\u957f\u6309\u60ac\u6d6e\u7403\u547c\u51fa", "long_press", "\u4fdd\u6301\u9ed8\u8ba4\u903b\u8f91\uff1a\u957f\u6309\u6253\u5f00\u6216\u6536\u8d77\u957f\u5bf9\u8bdd\u7a97\u3002"),
+    CompanionGestureOption("\u53cc\u51fb\u60ac\u6d6e\u7403\u547c\u51fa", "double_tap", "\u53cc\u51fb\u6253\u5f00\u6216\u6536\u8d77\u957f\u5bf9\u8bdd\u7a97\uff0c\u9002\u5408\u957f\u6309\u5bb9\u6613\u8bef\u89e6\u7684\u8bbe\u5907\u3002"),
+    CompanionGestureOption("\u5355\u51fb\u60ac\u6d6e\u7403\u547c\u51fa", "single_tap", "\u5355\u51fb\u76f4\u63a5\u6253\u5f00\u957f\u5bf9\u8bdd\u7a97\uff0c\u6700\u5feb\uff0c\u4f46\u4f1a\u5360\u7528\u539f\u672c\u7684\u5355\u51fb\u63d0\u793a\u3002"),
+    CompanionGestureOption("\u5173\u95ed\u60ac\u6d6e\u7403\u547c\u51fa", "disabled", "\u60ac\u6d6e\u7403\u4e0d\u518d\u76f4\u63a5\u547c\u51fa\u957f\u5bf9\u8bdd\uff0c\u53ea\u4fdd\u7559\u4e3b\u52a8\u5f39\u5e55\u70b9\u51fb\u5bfc\u5165\u3002")
 )
 
 private fun loadInstalledApps(context: Context): List<InstalledApp> {
