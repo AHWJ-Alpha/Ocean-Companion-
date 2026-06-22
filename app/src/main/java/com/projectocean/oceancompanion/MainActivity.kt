@@ -136,11 +136,11 @@ class MainActivity : ComponentActivity() {
                     .setTitle("New! Ocean Companion $version")
                     .setMessage(
                         "本次更新重点：\n" +
-                            "- 新增搜索 API 支持，用户请求联网资料时会把搜索结果交给 AI。\n" +
-                            "- 设置页拆分为 API、人设、皮肤、主动发言、伴随窗、搜索与语音模块。\n" +
-                            "- 非密钥类设置修改后实时生效，API 和模型配置独立保存。\n" +
-                            "- 长按悬浮球改为语音对话，AI 以主动弹幕回复。\n" +
-                            "- 新增 TTS/STT 配置，开启朗读后点击弹幕可停止语音。"
+                            "- 设置页进入时会读取上次保存的数据，不再先刷新为空。\n" +
+                            "- 修复更新检测文案乱码，并增加 GitHub Release 兜底检测。\n" +
+                            "- 长对话保留 5.1 稳定逻辑，继续使用人格、记忆和上下文。\n" +
+                            "- 历史记录支持按主题或按天长按删除。\n" +
+                            "- 保留搜索、语音和多 API fallback 能力。"
                     )
                     .setPositiveButton("知道了", null)
                     .show()

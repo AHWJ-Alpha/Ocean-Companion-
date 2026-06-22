@@ -22,7 +22,7 @@ class UpdateChecker(
         .build()
 ) {
     suspend fun checkLatest(): UpdateInfo? = withContext(Dispatchers.IO) {
-        fetchLatestRelease() ?: fetchNewestFromReleaseList()
+        fetchLatestRelease() ?: fetchNewestFromReleaseList() ?: fetchNewestFromAtom() ?: fetchNewestFromHtml()
     }
 
     private fun fetchLatestRelease(): UpdateInfo? = runCatching {
@@ -35,6 +35,16 @@ class UpdateChecker(
         (0 until array.length())
             .mapNotNull { index -> array.optJSONObject(index)?.toUpdateInfoIfNewer() }
             .maxWithOrNull { left, right -> compareVersions(left.latestVersion, right.latestVersion) }
+    }.getOrNull()
+
+    private fun fetchNewestFromAtom(): UpdateInfo? = runCatching {
+        val raw = fetchRaw(RELEASES_ATOM) ?: return@runCatching null
+        findNewestTag(raw)?.toFallbackUpdateInfo()
+    }.getOrNull()
+
+    private fun fetchNewestFromHtml(): UpdateInfo? = runCatching {
+        val raw = fetchRaw(RELEASES_PAGE) ?: return@runCatching null
+        findNewestTag(raw)?.toFallbackUpdateInfo()
     }.getOrNull()
 
     private fun fetchJsonObject(url: String): JSONObject? {
@@ -50,7 +60,8 @@ class UpdateChecker(
     private fun fetchRaw(url: String): String? {
         val request = Request.Builder()
             .url(url)
-            .header("Accept", "application/vnd.github+json")
+            .header("Accept", "application/vnd.github+json, application/atom+xml, text/html;q=0.9, */*;q=0.8")
+            .header("Cache-Control", "no-cache")
             .header("User-Agent", "OceanCompanion/${BuildConfig.VERSION_NAME}")
             .get()
             .build()
@@ -70,6 +81,19 @@ class UpdateChecker(
             body = optString("body").trim()
         )
     }
+
+    private fun findNewestTag(raw: String): String? {
+        return TAG_REGEX.findAll(raw)
+            .map { it.groupValues[1].removePrefix("v") }
+            .filter { isNewer(it, BuildConfig.VERSION_NAME) }
+            .maxWithOrNull { left, right -> compareVersions(left, right) }
+    }
+
+    private fun String.toFallbackUpdateInfo(): UpdateInfo = UpdateInfo(
+        latestVersion = this,
+        releaseUrl = "$RELEASE_TAG_PAGE_PREFIX$this",
+        body = "检测到 Ocean Companion $this 可用。请打开 Release 页面下载新版 APK。"
+    )
 
     private fun isNewer(remote: String, local: String): Boolean {
         return compareVersions(remote, local) > 0
@@ -95,5 +119,9 @@ class UpdateChecker(
     companion object {
         private const val LATEST_RELEASE_API = "https://api.github.com/repos/AHWJ-Alpha/Ocean-Companion-/releases/latest"
         private const val RELEASES_API = "https://api.github.com/repos/AHWJ-Alpha/Ocean-Companion-/releases?per_page=20"
+        private const val RELEASES_ATOM = "https://github.com/AHWJ-Alpha/Ocean-Companion-/releases.atom"
+        private const val RELEASES_PAGE = "https://github.com/AHWJ-Alpha/Ocean-Companion-/releases"
+        private const val RELEASE_TAG_PAGE_PREFIX = "https://github.com/AHWJ-Alpha/Ocean-Companion-/releases/tag/v"
+        private val TAG_REGEX = Regex("/releases/tag/(v?[0-9]+(?:[._-][0-9]+)*)")
     }
 }

@@ -82,6 +82,7 @@ import com.projectocean.oceancompanion.memory.PreferencesStore
 import com.projectocean.oceancompanion.ui.theme.LocalOceanAccent
 import com.projectocean.oceancompanion.ui.theme.parseOceanColor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -471,43 +472,47 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit, onCh
         installedApps = withContext(Dispatchers.Default) { loadInstalledApps(context).take(18) }
     }
 
-    LaunchedEffect(profiles, provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive, proactiveBannerMaxChars, companionReplyMaxChars, proactiveBannerOffset, proactiveMuteMinutes, companionOpenGesture, themeMode, animePrimaryColor, animeSecondaryColor, searchEnabled, searchProvider, searchApiBaseUrl, searchApiKey, searchEngineId, ttsEnabled, ttsProvider, ttsApiBaseUrl, ttsApiKey, ttsModel, ttsVoice, sttProvider, sttApiBaseUrl, sttApiKey, sttModel, sttLanguage) {
+    LaunchedEffect(Unit) {
         if (draftsLoaded) return@LaunchedEffect
-        apiProfilesDraft = profiles.ifEmpty {
-            listOf(ApiProfile(label = provider.ifBlank { "OpenAI" }, provider = provider, baseUrl = apiBaseUrl, apiKey = apiKey, model = modelName))
+        val savedProvider = store.provider.first()
+        val savedApiBaseUrl = store.apiBaseUrl.first()
+        val savedApiKey = store.apiKey.first()
+        val savedModelName = store.modelName.first()
+        apiProfilesDraft = store.apiProfiles.first().ifEmpty {
+            listOf(ApiProfile(label = savedProvider.ifBlank { "OpenAI" }, provider = savedProvider, baseUrl = savedApiBaseUrl, apiKey = savedApiKey, model = savedModelName))
         }
-        userNameDraft = userName
-        companionNameDraft = companionName
-        personaPromptDraft = personaPrompt
-        iconTextDraft = iconText
-        speechIntervalDraft = speechInterval
-        triggerAppsDraft = triggerApps
-        panelRatioDraft = panelRatio
-        proactiveDraft = proactive
-        proactiveBannerMaxCharsDraft = proactiveBannerMaxChars
-        companionReplyMaxCharsDraft = companionReplyMaxChars
-        proactiveBannerOffsetDraft = proactiveBannerOffset
-        proactiveMuteMinutesDraft = proactiveMuteMinutes
-        companionOpenGestureDraft = companionOpenGesture
-        themeModeDraft = themeMode
-        animePrimaryColorDraft = animePrimaryColor
-        animeSecondaryColorDraft = animeSecondaryColor
-        searchEnabledDraft = searchEnabled
-        searchProviderDraft = searchProvider
-        searchApiBaseUrlDraft = searchApiBaseUrl
-        searchApiKeyDraft = searchApiKey
-        searchEngineIdDraft = searchEngineId
-        ttsEnabledDraft = ttsEnabled
-        ttsProviderDraft = ttsProvider
-        ttsApiBaseUrlDraft = ttsApiBaseUrl
-        ttsApiKeyDraft = ttsApiKey
-        ttsModelDraft = ttsModel
-        ttsVoiceDraft = ttsVoice
-        sttProviderDraft = sttProvider
-        sttApiBaseUrlDraft = sttApiBaseUrl
-        sttApiKeyDraft = sttApiKey
-        sttModelDraft = sttModel
-        sttLanguageDraft = sttLanguage
+        userNameDraft = store.userName.first()
+        companionNameDraft = store.companionName.first()
+        personaPromptDraft = store.customPersonaPrompt.first()
+        iconTextDraft = store.iconText.first()
+        speechIntervalDraft = store.speechIntervalMinutes.first()
+        triggerAppsDraft = store.triggerAppNames.first()
+        panelRatioDraft = store.panelRatio.first()
+        proactiveDraft = store.proactiveReminders.first()
+        proactiveBannerMaxCharsDraft = store.proactiveBannerMaxChars.first()
+        companionReplyMaxCharsDraft = store.companionReplyMaxChars.first()
+        proactiveBannerOffsetDraft = store.proactiveBannerOffsetDp.first()
+        proactiveMuteMinutesDraft = store.proactiveMuteMinutes.first()
+        companionOpenGestureDraft = store.companionOpenGesture.first()
+        themeModeDraft = store.themeMode.first()
+        animePrimaryColorDraft = store.animePrimaryColor.first()
+        animeSecondaryColorDraft = store.animeSecondaryColor.first()
+        searchEnabledDraft = store.searchEnabled.first()
+        searchProviderDraft = store.searchProvider.first()
+        searchApiBaseUrlDraft = store.searchApiBaseUrl.first()
+        searchApiKeyDraft = store.searchApiKey.first()
+        searchEngineIdDraft = store.searchEngineId.first()
+        ttsEnabledDraft = store.ttsEnabled.first()
+        ttsProviderDraft = store.ttsProvider.first()
+        ttsApiBaseUrlDraft = store.ttsApiBaseUrl.first()
+        ttsApiKeyDraft = store.ttsApiKey.first()
+        ttsModelDraft = store.ttsModel.first()
+        ttsVoiceDraft = store.ttsVoice.first()
+        sttProviderDraft = store.sttProvider.first()
+        sttApiBaseUrlDraft = store.sttApiBaseUrl.first()
+        sttApiKeyDraft = store.sttApiKey.first()
+        sttModelDraft = store.sttModel.first()
+        sttLanguageDraft = store.sttLanguage.first()
         draftsLoaded = true
     }
 
@@ -527,13 +532,6 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit, onCh
         store.setProactiveMuteMinutes(proactiveMuteMinutesDraft.coerceIn(5, 240))
         store.setCompanionOpenGesture(companionOpenGestureDraft.ifBlank { "double_tap" })
         store.setTtsEnabled(ttsEnabledDraft)
-    }
-
-    LaunchedEffect(themeMode, animePrimaryColor, animeSecondaryColor) {
-        if (!draftsLoaded) return@LaunchedEffect
-        themeModeDraft = themeMode
-        animePrimaryColorDraft = animePrimaryColor
-        animeSecondaryColorDraft = animeSecondaryColor
     }
 
     LazyColumn(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
