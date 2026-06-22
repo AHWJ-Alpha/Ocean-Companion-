@@ -2,8 +2,10 @@
 
 import android.app.Service
 import android.app.usage.UsageStatsManager
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
 import android.graphics.Bitmap
@@ -13,6 +15,9 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
 import android.provider.Settings
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.StyleSpan
@@ -28,6 +33,7 @@ import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.graphics.Typeface
+import android.speech.tts.TextToSpeech
 import android.widget.Button as AndroidButton
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -41,6 +47,7 @@ import androidx.core.content.ContextCompat
 import com.projectocean.oceancompanion.R
 import com.projectocean.oceancompanion.ai.FallbackAIClient
 import com.projectocean.oceancompanion.ai.PromptEngine
+import com.projectocean.oceancompanion.ai.SearchClient
 import com.projectocean.oceancompanion.agent.SharedScreenContext
 import com.projectocean.oceancompanion.memory.ConversationHistory
 import com.projectocean.oceancompanion.memory.LongTermMemory
@@ -56,6 +63,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 class FloatingService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -85,7 +93,14 @@ class FloatingService : Service() {
     private var currentProactiveBannerMaxChars = 60
     private var currentProactiveBannerOffsetDp = 12
     private var currentProactiveMuteMinutes = 30
-    private var currentCompanionOpenGesture = "long_press"
+    private var currentCompanionOpenGesture = "double_tap"
+    private var currentTtsEnabled = false
+    private var currentTtsVoice = ""
+    private var currentSttLanguage = "zh-CN"
+    private var textToSpeech: TextToSpeech? = null
+    private var ttsReady = false
+    private var speechRecognizer: SpeechRecognizer? = null
+    private var voiceListening = false
     private var currentCompanionTheme = CompanionTheme.default()
     private var currentSessionId = "session-${System.currentTimeMillis()}"
     private var currentSessionTopic = "Ocean Companion"
@@ -102,7 +117,10 @@ class FloatingService : Service() {
         scope.launch { preferences.proactiveBannerMaxChars.collect { currentProactiveBannerMaxChars = it } }
         scope.launch { preferences.proactiveBannerOffsetDp.collect { currentProactiveBannerOffsetDp = it.coerceIn(0, 160) } }
         scope.launch { preferences.proactiveMuteMinutes.collect { currentProactiveMuteMinutes = it.coerceIn(5, 240) } }
-        scope.launch { preferences.companionOpenGesture.collect { currentCompanionOpenGesture = it.ifBlank { "long_press" } } }
+        scope.launch { preferences.companionOpenGesture.collect { currentCompanionOpenGesture = it.ifBlank { "double_tap" } } }
+        scope.launch { preferences.ttsEnabled.collect { currentTtsEnabled = it; ensureTts() } }
+        scope.launch { preferences.ttsVoice.collect { currentTtsVoice = it; applyTtsVoice() } }
+        scope.launch { preferences.sttLanguage.collect { currentSttLanguage = it.ifBlank { "zh-CN" } } }
         if (Settings.canDrawOverlays(this)) showBubble()
         startAutoSpeechScheduler()
     }
@@ -125,6 +143,9 @@ class FloatingService : Service() {
     }
     override fun onDestroy() {
         schedulerJob?.cancel()
+        speechRecognizer?.destroy()
+        textToSpeech?.stop()
+        textToSpeech?.shutdown()
         if (::windowManager.isInitialized) {
             bubble?.let { runCatching { windowManager.removeView(it) } }
             companionPanel?.let { runCatching { windowManager.removeView(it) } }
@@ -202,13 +223,11 @@ class FloatingService : Service() {
                     dragging = false
                     longPressTriggered = false
                     longPressJob?.cancel()
-                    if (currentCompanionOpenGesture == "long_press") {
-                        longPressJob = scope.launch {
-                            delay(ViewConfiguration.getLongPressTimeout().toLong())
-                            if (!dragging && bubble === view) {
-                                longPressTriggered = true
-                                toggleCompanionPanel()
-                            }
+                    longPressJob = scope.launch {
+                        delay(ViewConfiguration.getLongPressTimeout().toLong())
+                        if (!dragging && bubble === view) {
+                            longPressTriggered = true
+                            startVoiceConversation()
                         }
                     }
                     true
@@ -233,6 +252,7 @@ class FloatingService : Service() {
                 MotionEvent.ACTION_UP -> {
                     longPressJob?.cancel()
                     if (longPressTriggered) {
+                        stopVoiceConversation()
                         longPressTriggered = false
                         return@setOnTouchListener true
                     }
@@ -270,6 +290,7 @@ class FloatingService : Service() {
                 MotionEvent.ACTION_CANCEL -> {
                     longPressJob?.cancel()
                     singleTapJob?.cancel()
+                    if (longPressTriggered) stopVoiceConversation()
                     dragging = false
                     longPressTriggered = false
                     true
@@ -303,6 +324,115 @@ class FloatingService : Service() {
                 if (bubble === view) bubble = null
             }
             .start()
+    }
+
+    private fun startVoiceConversation() {
+        if (voiceListening) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            showProactiveBannerIfFresh("${companionName()}：还没有麦克风权限。请到系统权限里允许录音后，再长按悬浮球语音对话。")
+            return
+        }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            showProactiveBannerIfFresh("${companionName()}：当前系统没有可用的语音识别服务。")
+            return
+        }
+        voiceListening = true
+        showProactiveBanner("${companionName()}：正在听，松手发送。")
+        val recognizer = speechRecognizer ?: SpeechRecognizer.createSpeechRecognizer(this).also { speechRecognizer = it }
+        recognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: android.os.Bundle?) = Unit
+            override fun onBeginningOfSpeech() = Unit
+            override fun onRmsChanged(rmsdB: Float) = Unit
+            override fun onBufferReceived(buffer: ByteArray?) = Unit
+            override fun onEndOfSpeech() { voiceListening = false }
+            override fun onPartialResults(partialResults: android.os.Bundle?) = Unit
+            override fun onEvent(eventType: Int, params: android.os.Bundle?) = Unit
+            override fun onError(error: Int) {
+                voiceListening = false
+                val reason = when (error) {
+                    SpeechRecognizer.ERROR_NO_MATCH -> "没有听清。"
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "没有检测到说话。"
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "麦克风权限不足。"
+                    else -> "语音识别失败：$error"
+                }
+                showProactiveBannerIfFresh("${companionName()}：$reason")
+            }
+            override fun onResults(results: android.os.Bundle?) {
+                voiceListening = false
+                val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty().trim()
+                if (text.isBlank()) {
+                    showProactiveBannerIfFresh("${companionName()}：没有识别到有效语音。")
+                    return
+                }
+                handleVoiceUserText(text)
+            }
+        })
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, currentSttLanguage)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+        }
+        runCatching { recognizer.startListening(intent) }.onFailure {
+            voiceListening = false
+            showProactiveBannerIfFresh("${companionName()}：语音识别启动失败，请检查系统语音服务。")
+        }
+    }
+
+    private fun stopVoiceConversation() {
+        if (!voiceListening) return
+        runCatching { speechRecognizer?.stopListening() }
+    }
+
+    private fun handleVoiceUserText(text: String) {
+        showProactiveBanner("${companionName()}：听到了「${text.take(40)}」，正在思考。")
+        appendConversationLine("${userName()}：$text", remember = true)
+        scope.launch {
+            val reply = generateManualReply(text)
+            showProactiveBannerIfFresh(reply)
+            appendConversationLine(reply, remember = true)
+            speakBannerIfEnabled(reply)
+        }
+    }
+
+    private fun ensureTts() {
+        if (!currentTtsEnabled) {
+            textToSpeech?.stop()
+            return
+        }
+        if (textToSpeech != null) return
+        textToSpeech = TextToSpeech(this) { status ->
+            ttsReady = status == TextToSpeech.SUCCESS
+            if (ttsReady) {
+                textToSpeech?.language = Locale.CHINESE
+                applyTtsVoice()
+            }
+        }
+    }
+
+    private fun applyTtsVoice() {
+        val tts = textToSpeech ?: return
+        if (!ttsReady || currentTtsVoice.isBlank()) return
+        val selected = tts.voices?.firstOrNull { voice ->
+            voice.name.equals(currentTtsVoice, ignoreCase = true) || voice.locale.toLanguageTag().equals(currentTtsVoice, ignoreCase = true)
+        }
+        if (selected != null) tts.voice = selected
+    }
+
+    private fun speakBannerIfEnabled(message: String) {
+        if (!currentTtsEnabled) return
+        ensureTts()
+        if (!ttsReady) return
+        val text = message.substringAfter('：', message).trim().ifBlank { message }
+        textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ocean-banner-${System.currentTimeMillis()}")
+    }
+
+    private fun stopTtsIfSpeaking(): Boolean {
+        val tts = textToSpeech ?: return false
+        if (!tts.isSpeaking) return false
+        tts.stop()
+        Toast.makeText(this, "${companionName()}：已停止朗读。", Toast.LENGTH_SHORT).show()
+        return true
     }
 
     private fun toggleCompanionPanel() {
@@ -711,6 +841,7 @@ class FloatingService : Service() {
             var bannerLastTapAt = 0L
             var bannerTapJob: Job? = null
             setOnClickListener {
+                if (stopTtsIfSpeaking()) return@setOnClickListener
                 val now = System.currentTimeMillis()
                 bannerTapCount = if (now - bannerLastTapAt < 360) bannerTapCount + 1 else 1
                 bannerLastTapAt = now
@@ -886,13 +1017,16 @@ class FloatingService : Service() {
         val fallback = "$name\uff1a\u8fd8\u6ca1\u6709\u914d\u7f6e\u53ef\u7528\u7684 AI API\u3002\u8bf7\u5728\u8bbe\u7f6e\u91cc\u6dfb\u52a0\u81f3\u5c11\u4e00\u4e2a\u542f\u7528\u7684 API \u914d\u7f6e\uff0c\u5e76\u586b\u5199 Base URL\u3001API Key \u548c\u6a21\u578b\u540d\u79f0\u3002"
         if (preferences.resolvedApiProfiles().none { it.isUsable() }) return fallback
         return try {
+            val searchResults = SearchClient(preferences).searchIfNeeded(userText)
+            val searchContext = searchResults.mapIndexed { index, result -> result.asPromptLine(index + 1) }.joinToString("\n\n")
             val request = promptEngine.buildLongConversationPrompt(
                 userText = userText,
                 screenText = context.ifBlank { "屏幕文字为空或暂不可读。" },
                 customPersona = "AI name: $name\nUser name: $user\n$customPersona",
                 memory = memoryText,
                 conversation = conversationText(),
-                maxChars = preferences.companionReplyMaxChars.first()
+                maxChars = preferences.companionReplyMaxChars.first(),
+                searchContext = searchContext
             )
             FallbackAIClient(preferences).complete(request).text.ifBlank { fallback }.withCompanionName(name)
         } catch (_: Exception) {

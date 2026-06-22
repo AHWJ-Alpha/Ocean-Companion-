@@ -33,12 +33,26 @@ class PreferencesStore(private val context: Context) {
     val proactiveBannerOffsetDp = context.dataStore.data.map { it[Keys.ProactiveBannerOffsetDp] ?: 12 }
     val proactiveMuteMinutes = context.dataStore.data.map { it[Keys.ProactiveMuteMinutes] ?: 30 }
     val proactiveMutedUntil = context.dataStore.data.map { it[Keys.ProactiveMutedUntil] ?: 0L }
-    val companionOpenGesture = context.dataStore.data.map { it[Keys.CompanionOpenGesture] ?: "long_press" }
+    val companionOpenGesture = context.dataStore.data.map { it[Keys.CompanionOpenGesture] ?: "double_tap" }
     val lastUpdatePromptDay = context.dataStore.data.map { it[Keys.LastUpdatePromptDay] ?: "" }
     val lastWhatsNewVersion = context.dataStore.data.map { it[Keys.LastWhatsNewVersion] ?: "" }
     val themeMode = context.dataStore.data.map { it[Keys.ThemeMode] ?: "system" }
     val animePrimaryColor = context.dataStore.data.map { it[Keys.AnimePrimaryColor] ?: "#39C5BB" }
     val animeSecondaryColor = context.dataStore.data.map { it[Keys.AnimeSecondaryColor] ?: "#00AEEF" }
+    val searchEnabled = context.dataStore.data.map { it[Keys.SearchEnabled] ?: false }
+    val searchProvider = context.dataStore.data.map { it[Keys.SearchProvider] ?: "tavily" }
+    val searchApiBaseUrl = context.dataStore.data.map { it[Keys.SearchApiBaseUrl] ?: "https://api.tavily.com" }
+    val searchApiKey = context.dataStore.data.map { it[Keys.SearchApiKey] ?: "" }
+    val searchEngineId = context.dataStore.data.map { it[Keys.SearchEngineId] ?: "" }
+    val ttsEnabled = context.dataStore.data.map { it[Keys.TtsEnabled] ?: false }
+    val ttsProvider = context.dataStore.data.map { it[Keys.TtsProvider] ?: "system" }
+    val ttsApiBaseUrl = context.dataStore.data.map { it[Keys.TtsApiBaseUrl] ?: "" }
+    val ttsApiKey = context.dataStore.data.map { it[Keys.TtsApiKey] ?: "" }
+    val ttsVoice = context.dataStore.data.map { it[Keys.TtsVoice] ?: "" }
+    val sttProvider = context.dataStore.data.map { it[Keys.SttProvider] ?: "system" }
+    val sttApiBaseUrl = context.dataStore.data.map { it[Keys.SttApiBaseUrl] ?: "" }
+    val sttApiKey = context.dataStore.data.map { it[Keys.SttApiKey] ?: "" }
+    val sttLanguage = context.dataStore.data.map { it[Keys.SttLanguage] ?: "zh-CN" }
     val apiProfilesJson = context.dataStore.data.map { it[Keys.ApiProfilesJson] ?: "" }
     val apiProfiles = context.dataStore.data.map { prefs ->
         val saved = ApiProfile.decode(prefs[Keys.ApiProfilesJson].orEmpty())
@@ -74,6 +88,7 @@ class PreferencesStore(private val context: Context) {
     suspend fun setProactiveBannerMaxChars(value: Int) = context.dataStore.edit { it[Keys.ProactiveBannerMaxChars] = value }
     suspend fun setCompanionReplyMaxChars(value: Int) = context.dataStore.edit { it[Keys.CompanionReplyMaxChars] = value }
     suspend fun setProactiveBannerOffsetDp(value: Int) = context.dataStore.edit { it[Keys.ProactiveBannerOffsetDp] = value }
+    suspend fun setProactiveMuteMinutes(value: Int) = context.dataStore.edit { it[Keys.ProactiveMuteMinutes] = value }
     suspend fun setProactiveMutedUntil(value: Long) = context.dataStore.edit { it[Keys.ProactiveMutedUntil] = value }
     suspend fun setCompanionOpenGesture(value: String) = context.dataStore.edit { it[Keys.CompanionOpenGesture] = value }
     suspend fun setLastUpdatePromptDay(value: String) = context.dataStore.edit { it[Keys.LastUpdatePromptDay] = value }
@@ -82,6 +97,38 @@ class PreferencesStore(private val context: Context) {
     suspend fun setThemeMode(value: String) = context.dataStore.edit { it[Keys.ThemeMode] = value }
     suspend fun setAnimePrimaryColor(value: String) = context.dataStore.edit { it[Keys.AnimePrimaryColor] = value }
     suspend fun setAnimeSecondaryColor(value: String) = context.dataStore.edit { it[Keys.AnimeSecondaryColor] = value }
+    suspend fun setSearchEnabled(value: Boolean) = context.dataStore.edit { it[Keys.SearchEnabled] = value }
+    suspend fun setTtsEnabled(value: Boolean) = context.dataStore.edit { it[Keys.TtsEnabled] = value }
+
+    suspend fun saveSearchSettings(enabled: Boolean, provider: String, baseUrl: String, apiKey: String, engineId: String) = context.dataStore.edit {
+        it[Keys.SearchEnabled] = enabled
+        it[Keys.SearchProvider] = provider
+        it[Keys.SearchApiBaseUrl] = baseUrl
+        it[Keys.SearchApiKey] = apiKey
+        it[Keys.SearchEngineId] = engineId
+    }
+
+    suspend fun saveSpeechSettings(
+        ttsEnabled: Boolean,
+        ttsProvider: String,
+        ttsBaseUrl: String,
+        ttsApiKey: String,
+        ttsVoice: String,
+        sttProvider: String,
+        sttBaseUrl: String,
+        sttApiKey: String,
+        sttLanguage: String
+    ) = context.dataStore.edit {
+        it[Keys.TtsEnabled] = ttsEnabled
+        it[Keys.TtsProvider] = ttsProvider
+        it[Keys.TtsApiBaseUrl] = ttsBaseUrl
+        it[Keys.TtsApiKey] = ttsApiKey
+        it[Keys.TtsVoice] = ttsVoice
+        it[Keys.SttProvider] = sttProvider
+        it[Keys.SttApiBaseUrl] = sttBaseUrl
+        it[Keys.SttApiKey] = sttApiKey
+        it[Keys.SttLanguage] = sttLanguage
+    }
 
     suspend fun resolvedApiProfiles(): List<ApiProfile> = apiProfiles.first()
 
@@ -102,7 +149,7 @@ class PreferencesStore(private val context: Context) {
         companionReplyMaxChars: Int = 0,
         proactiveBannerOffsetDp: Int = 12,
         proactiveMuteMinutes: Int = 30,
-        companionOpenGesture: String = "long_press",
+        companionOpenGesture: String = "double_tap",
         themeMode: String = "system",
         animePrimaryColor: String = "#39C5BB",
         animeSecondaryColor: String = "#00AEEF"
@@ -155,7 +202,7 @@ class PreferencesStore(private val context: Context) {
         companionReplyMaxChars: Int = 0,
         proactiveBannerOffsetDp: Int = 12,
         proactiveMuteMinutes: Int = 30,
-        companionOpenGesture: String = "long_press",
+        companionOpenGesture: String = "double_tap",
         themeMode: String = "system",
         animePrimaryColor: String = "#39C5BB",
         animeSecondaryColor: String = "#00AEEF",
@@ -211,5 +258,19 @@ class PreferencesStore(private val context: Context) {
         val AnimePrimaryColor = stringPreferencesKey("anime_primary_color")
         val AnimeSecondaryColor = stringPreferencesKey("anime_secondary_color")
         val ApiProfilesJson = stringPreferencesKey("api_profiles_json")
+        val SearchEnabled = booleanPreferencesKey("search_enabled")
+        val SearchProvider = stringPreferencesKey("search_provider")
+        val SearchApiBaseUrl = stringPreferencesKey("search_api_base_url")
+        val SearchApiKey = stringPreferencesKey("search_api_key")
+        val SearchEngineId = stringPreferencesKey("search_engine_id")
+        val TtsEnabled = booleanPreferencesKey("tts_enabled")
+        val TtsProvider = stringPreferencesKey("tts_provider")
+        val TtsApiBaseUrl = stringPreferencesKey("tts_api_base_url")
+        val TtsApiKey = stringPreferencesKey("tts_api_key")
+        val TtsVoice = stringPreferencesKey("tts_voice")
+        val SttProvider = stringPreferencesKey("stt_provider")
+        val SttApiBaseUrl = stringPreferencesKey("stt_api_base_url")
+        val SttApiKey = stringPreferencesKey("stt_api_key")
+        val SttLanguage = stringPreferencesKey("stt_language")
     }
 }

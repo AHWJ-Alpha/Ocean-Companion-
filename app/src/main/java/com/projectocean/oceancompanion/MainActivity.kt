@@ -1,7 +1,9 @@
 package com.projectocean.oceancompanion
 
+import android.Manifest
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -13,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.projectocean.oceancompanion.memory.PreferencesStore
 import com.projectocean.oceancompanion.ocr.ScreenCapture
@@ -33,6 +36,14 @@ class MainActivity : ComponentActivity() {
 
     private val overlayPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         startFloatingIfAllowed()
+    }
+
+    private val audioPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        Toast.makeText(
+            this,
+            if (granted) "麦克风权限已开启，长按悬浮球可语音对话" else "未开启麦克风权限，长按语音对话暂不可用",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private val screenCapturePermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -125,11 +136,11 @@ class MainActivity : ComponentActivity() {
                     .setTitle("New! Ocean Companion $version")
                     .setMessage(
                         "本次更新重点：\n" +
-                            "- 修复自动更新不易感知的问题，新增手动检查更新。\n" +
-                            "- API Key 输入更顺手，支持显示/隐藏和局部确认。\n" +
-                            "- API 配置可自动获取模型列表，并支持深度思考模型参数。\n" +
-                            "- 长对话可限制每次 AI 输出长度，0 表示无限制。\n" +
-                            "- 主动弹幕增加三击静默、重复抑制和更严格的屏幕依据。"
+                            "- 新增搜索 API 支持，用户请求联网资料时会把搜索结果交给 AI。\n" +
+                            "- 设置页拆分为 API、人设、皮肤、主动发言、伴随窗、搜索与语音模块。\n" +
+                            "- 非密钥类设置修改后实时生效，API 和模型配置独立保存。\n" +
+                            "- 长按悬浮球改为语音对话，AI 以主动弹幕回复。\n" +
+                            "- 新增 TTS/STT 配置，开启朗读后点击弹幕可停止语音。"
                     )
                     .setPositiveButton("知道了", null)
                     .show()
@@ -202,14 +213,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestOverlayAndStart() {
+        requestAudioPermissionIfNeeded()
         if (Settings.canDrawOverlays(this)) {
             startFloatingIfAllowed()
         } else {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")
-            )
+            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
             overlayPermission.launch(intent)
+        }
+    }
+
+    private fun requestAudioPermissionIfNeeded() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            audioPermission.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 
