@@ -799,13 +799,33 @@ class FloatingService : Service() {
             elevation = 26f
         }
 
+        val titleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(2, 0, 2, 6)
+        }
         val title = TextView(this).apply {
             text = "${companionName()} \u957f\u65f6\u4f34\u968f"
             textSize = 18f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(theme.textPrimary)
-            setPadding(2, 0, 2, 6)
         }
+        val close = TextView(this).apply {
+            text = "×"
+            contentDescription = "退出长时伴随"
+            textSize = 22f
+            gravity = Gravity.CENTER
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(theme.textPrimary)
+            background = GradientDrawable().apply {
+                setColor(theme.inputBackground)
+                cornerRadius = 20f
+                setStroke(1, theme.stroke)
+            }
+            setOnClickListener { toggleCompanionPanel() }
+        }
+        titleRow.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        titleRow.addView(close, LinearLayout.LayoutParams(54, 54))
 
         val hint = TextView(this).apply {
             text = "已连接屏幕/文件上下文和长时记忆；竖屏为下半屏，横屏为右半屏。"
@@ -886,7 +906,7 @@ class FloatingService : Service() {
         inputRow.addView(input, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         inputRow.addView(send, LinearLayout.LayoutParams(72, 64).apply { leftMargin = 10 })
 
-        container.addView(title)
+        container.addView(titleRow)
         container.addView(hint)
         container.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         container.addView(inputRow)
