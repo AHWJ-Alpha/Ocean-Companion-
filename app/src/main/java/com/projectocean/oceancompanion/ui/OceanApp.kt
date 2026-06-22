@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccessibilityNew
 import androidx.compose.material.icons.outlined.BubbleChart
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.ScreenshotMonitor
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -281,6 +284,10 @@ private fun HistoryScreen(modifier: Modifier) {
                     },
                     onUpdateContent = { id, content ->
                         scope.launch { dao.updateConversationContent(id, content.trim()) }
+                    },
+                    onDeleteGroup = {
+                        val ids = items.map { it.id }
+                        scope.launch { dao.deleteConversationsByIds(ids) }
                     }
                 )
             }
@@ -288,25 +295,60 @@ private fun HistoryScreen(modifier: Modifier) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HistoryGroupCard(
     title: String,
     items: List<ConversationHistory>,
     canRename: Boolean,
     onRename: (String) -> Unit,
-    onUpdateContent: (Long, String) -> Unit
+    onUpdateContent: (Long, String) -> Unit,
+    onDeleteGroup: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var confirmingDelete by remember { mutableStateOf(false) }
     var titleDraft by remember(title) { mutableStateOf(title) }
     OceanCard {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(
+            Modifier
+                .combinedClickable(
+                    onClick = { expanded = !expanded },
+                    onLongClick = { confirmingDelete = true }
+                )
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f)) {
                     Text(title, fontWeight = FontWeight.Bold)
-                    MutedText("${items.size} 条 · ${formatDay(items.lastOrNull()?.createdAt ?: 0L)}", small = true)
+                    MutedText("${items.size} 条 · ${formatDay(items.lastOrNull()?.createdAt ?: 0L)} · 长按删除本组", small = true)
                 }
                 OutlinedButton(onClick = { expanded = !expanded }) {
                     Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                }
+            }
+            if (confirmingDelete) {
+                Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.82f)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("删除这组历史？", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onErrorContainer)
+                        MutedText("会删除当前${if (canRename) "主题" else "日期"}下显示的 ${items.size} 条对话记录。", small = true)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedButton(onClick = { confirmingDelete = false }, modifier = Modifier.weight(1f)) {
+                                Text("取消")
+                            }
+                            Button(
+                                onClick = {
+                                    confirmingDelete = false
+                                    onDeleteGroup()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Outlined.Delete, contentDescription = null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("删除")
+                            }
+                        }
+                    }
                 }
             }
             if (expanded) {
@@ -372,10 +414,12 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit, onCh
     val ttsProvider by store.ttsProvider.collectAsState("system")
     val ttsApiBaseUrl by store.ttsApiBaseUrl.collectAsState("")
     val ttsApiKey by store.ttsApiKey.collectAsState("")
+    val ttsModel by store.ttsModel.collectAsState("tts-1")
     val ttsVoice by store.ttsVoice.collectAsState("")
     val sttProvider by store.sttProvider.collectAsState("system")
     val sttApiBaseUrl by store.sttApiBaseUrl.collectAsState("")
     val sttApiKey by store.sttApiKey.collectAsState("")
+    val sttModel by store.sttModel.collectAsState("whisper-1")
     val sttLanguage by store.sttLanguage.collectAsState("zh-CN")
     var installedApps by remember { mutableStateOf(emptyList<InstalledApp>()) }
 
@@ -405,10 +449,12 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit, onCh
     var ttsProviderDraft by remember { mutableStateOf(ttsProvider) }
     var ttsApiBaseUrlDraft by remember { mutableStateOf(ttsApiBaseUrl) }
     var ttsApiKeyDraft by remember { mutableStateOf(ttsApiKey) }
+    var ttsModelDraft by remember { mutableStateOf(ttsModel) }
     var ttsVoiceDraft by remember { mutableStateOf(ttsVoice) }
     var sttProviderDraft by remember { mutableStateOf(sttProvider) }
     var sttApiBaseUrlDraft by remember { mutableStateOf(sttApiBaseUrl) }
     var sttApiKeyDraft by remember { mutableStateOf(sttApiKey) }
+    var sttModelDraft by remember { mutableStateOf(sttModel) }
     var sttLanguageDraft by remember { mutableStateOf(sttLanguage) }
     var savedNotice by remember { mutableStateOf("") }
     var draftsLoaded by remember { mutableStateOf(false) }
@@ -425,7 +471,7 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit, onCh
         installedApps = withContext(Dispatchers.Default) { loadInstalledApps(context).take(18) }
     }
 
-    LaunchedEffect(profiles, provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive, proactiveBannerMaxChars, companionReplyMaxChars, proactiveBannerOffset, proactiveMuteMinutes, companionOpenGesture, themeMode, animePrimaryColor, animeSecondaryColor, searchEnabled, searchProvider, searchApiBaseUrl, searchApiKey, searchEngineId, ttsEnabled, ttsProvider, ttsApiBaseUrl, ttsApiKey, ttsVoice, sttProvider, sttApiBaseUrl, sttApiKey, sttLanguage) {
+    LaunchedEffect(profiles, provider, apiBaseUrl, apiKey, modelName, userName, companionName, personaPrompt, iconText, speechInterval, triggerApps, panelRatio, proactive, proactiveBannerMaxChars, companionReplyMaxChars, proactiveBannerOffset, proactiveMuteMinutes, companionOpenGesture, themeMode, animePrimaryColor, animeSecondaryColor, searchEnabled, searchProvider, searchApiBaseUrl, searchApiKey, searchEngineId, ttsEnabled, ttsProvider, ttsApiBaseUrl, ttsApiKey, ttsModel, ttsVoice, sttProvider, sttApiBaseUrl, sttApiKey, sttModel, sttLanguage) {
         if (draftsLoaded) return@LaunchedEffect
         apiProfilesDraft = profiles.ifEmpty {
             listOf(ApiProfile(label = provider.ifBlank { "OpenAI" }, provider = provider, baseUrl = apiBaseUrl, apiKey = apiKey, model = modelName))
@@ -455,15 +501,17 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit, onCh
         ttsProviderDraft = ttsProvider
         ttsApiBaseUrlDraft = ttsApiBaseUrl
         ttsApiKeyDraft = ttsApiKey
+        ttsModelDraft = ttsModel
         ttsVoiceDraft = ttsVoice
         sttProviderDraft = sttProvider
         sttApiBaseUrlDraft = sttApiBaseUrl
         sttApiKeyDraft = sttApiKey
+        sttModelDraft = sttModel
         sttLanguageDraft = sttLanguage
         draftsLoaded = true
     }
 
-    LaunchedEffect(userNameDraft, companionNameDraft, personaPromptDraft, iconTextDraft, speechIntervalDraft, triggerAppsDraft, panelRatioDraft, proactiveDraft, proactiveBannerMaxCharsDraft, companionReplyMaxCharsDraft, proactiveBannerOffsetDraft, proactiveMuteMinutesDraft, companionOpenGestureDraft, themeModeDraft, animePrimaryColorDraft, animeSecondaryColorDraft, ttsEnabledDraft) {
+    LaunchedEffect(userNameDraft, companionNameDraft, personaPromptDraft, iconTextDraft, speechIntervalDraft, triggerAppsDraft, panelRatioDraft, proactiveDraft, proactiveBannerMaxCharsDraft, companionReplyMaxCharsDraft, proactiveBannerOffsetDraft, proactiveMuteMinutesDraft, companionOpenGestureDraft, ttsEnabledDraft) {
         if (!draftsLoaded) return@LaunchedEffect
         store.setUserName(userNameDraft.trim().ifBlank { "你" })
         store.setCompanionName(companionNameDraft.trim().ifBlank { "Ocean" })
@@ -478,10 +526,14 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit, onCh
         store.setProactiveBannerOffsetDp(proactiveBannerOffsetDraft.coerceIn(0, 160))
         store.setProactiveMuteMinutes(proactiveMuteMinutesDraft.coerceIn(5, 240))
         store.setCompanionOpenGesture(companionOpenGestureDraft.ifBlank { "double_tap" })
-        store.setThemeMode(themeModeDraft)
-        store.setAnimePrimaryColor(animePrimaryColorDraft.ifBlank { "#39C5BB" })
-        store.setAnimeSecondaryColor(animeSecondaryColorDraft.ifBlank { "#00AEEF" })
         store.setTtsEnabled(ttsEnabledDraft)
+    }
+
+    LaunchedEffect(themeMode, animePrimaryColor, animeSecondaryColor) {
+        if (!draftsLoaded) return@LaunchedEffect
+        themeModeDraft = themeMode
+        animePrimaryColorDraft = animePrimaryColor
+        animeSecondaryColorDraft = animeSecondaryColor
     }
 
     LazyColumn(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -505,6 +557,7 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit, onCh
                             selected = option.value == themeModeDraft,
                             onClick = {
                                 themeModeDraft = option.value
+                                store.setThemeModeAsync(option.value)
                                 selectionHint = SelectionHint(option.label, option.description)
                             }
                         )
@@ -513,8 +566,16 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit, onCh
                         ColorPreview(animePrimaryColorDraft, Modifier.weight(1f))
                         ColorPreview(animeSecondaryColorDraft, Modifier.weight(1f))
                     }
-                    ConfigField("二次元主色 #RRGGBB", animePrimaryColorDraft) { animePrimaryColorDraft = normalizeColorInput(it) }
-                    ConfigField("二次元辅色 #RRGGBB", animeSecondaryColorDraft) { animeSecondaryColorDraft = normalizeColorInput(it) }
+                    ConfigField("二次元主色 #RRGGBB", animePrimaryColorDraft) {
+                        val normalized = normalizeColorInput(it)
+                        animePrimaryColorDraft = normalized
+                        store.setAnimePrimaryColorAsync(normalized.ifBlank { "#39C5BB" })
+                    }
+                    ConfigField("二次元辅色 #RRGGBB", animeSecondaryColorDraft) {
+                        val normalized = normalizeColorInput(it)
+                        animeSecondaryColorDraft = normalized
+                        store.setAnimeSecondaryColorAsync(normalized.ifBlank { "#00AEEF" })
+                    }
                     MutedText("默认主色为 #39C5BB、辅色为 #00AEEF。自定义两种颜色后，系统会按默认蓝青色对应位置映射到主页、主动弹幕和长对话窗口。", small = true)
                 }
             }
@@ -609,23 +670,47 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit, onCh
                         Text("弹幕回复同时朗读", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                         Switch(checked = ttsEnabledDraft, onCheckedChange = { ttsEnabledDraft = it })
                     }
-                    MutedText("5.2 先使用系统 STT/TTS 跑通长按语音对话；这里保留云端 TTS/STT 的 Provider、Key 与音色配置，后续可接具体厂商。", small = true)
+                    MutedText("长按悬浮球开始语音输入，松手后识别并交给 AI；TTS 开启后，主动弹幕和语音回复会同步朗读。系统语音不需要 Key，云端语音使用 OpenAI 兼容音频接口。", small = true)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FullWidthIconButton("系统语音", Icons.Outlined.PlayArrow, {
                             sttProviderDraft = "system"
                             ttsProviderDraft = "system"
+                            sttApiBaseUrlDraft = ""
+                            ttsApiBaseUrlDraft = ""
                         }, Modifier.weight(1f), selected = sttProviderDraft == "system" && ttsProviderDraft == "system")
-                        FullWidthIconButton("API 语音", Icons.Outlined.Settings, {
+                        FullWidthIconButton("OpenAI 语音", Icons.Outlined.GraphicEq, {
+                            sttProviderDraft = "openai"
+                            ttsProviderDraft = "openai"
+                            sttApiBaseUrlDraft = "https://api.openai.com/v1"
+                            ttsApiBaseUrlDraft = "https://api.openai.com/v1"
+                            sttModelDraft = "whisper-1"
+                            ttsModelDraft = "tts-1"
+                            ttsVoiceDraft = "alloy"
+                        }, Modifier.weight(1f), selected = sttProviderDraft == "openai" && ttsProviderDraft == "openai")
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FullWidthIconButton("阿里百炼兼容", Icons.Outlined.GraphicEq, {
+                            sttProviderDraft = "aliyun"
+                            ttsProviderDraft = "aliyun"
+                            sttApiBaseUrlDraft = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                            ttsApiBaseUrlDraft = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+                            sttModelDraft = "paraformer-realtime-v2"
+                            ttsModelDraft = "cosyvoice-v1"
+                            ttsVoiceDraft = "longxiaochun"
+                        }, Modifier.weight(1f), selected = sttProviderDraft == "aliyun" || ttsProviderDraft == "aliyun")
+                        FullWidthIconButton("自定义兼容", Icons.Outlined.Settings, {
                             sttProviderDraft = "custom"
                             ttsProviderDraft = "custom"
                         }, Modifier.weight(1f), selected = sttProviderDraft == "custom" || ttsProviderDraft == "custom")
                     }
                     ConfigField("STT 语言", sttLanguageDraft, leadingIcon = Icons.Outlined.Chat) { sttLanguageDraft = it.ifBlank { "zh-CN" } }
+                    ConfigField("STT 模型", sttModelDraft, leadingIcon = Icons.Outlined.GraphicEq) { sttModelDraft = it }
                     ConfigField("STT Base URL", sttApiBaseUrlDraft, leadingIcon = Icons.Outlined.Settings) { sttApiBaseUrlDraft = it }
                     ConfigField("STT API Key", sttApiKeyDraft, leadingIcon = Icons.Outlined.Settings, password = true) { sttApiKeyDraft = it }
+                    ConfigField("TTS 模型", ttsModelDraft, leadingIcon = Icons.Outlined.GraphicEq) { ttsModelDraft = it }
                     ConfigField("TTS Base URL", ttsApiBaseUrlDraft, leadingIcon = Icons.Outlined.Settings) { ttsApiBaseUrlDraft = it }
                     ConfigField("TTS API Key", ttsApiKeyDraft, leadingIcon = Icons.Outlined.Settings, password = true) { ttsApiKeyDraft = it }
-                    ConfigField("TTS 音色 / 系统 Voice 名称", ttsVoiceDraft, leadingIcon = Icons.Outlined.PlayArrow) { ttsVoiceDraft = it }
+                    ConfigField("TTS 音色 / 系统 Voice 名称", ttsVoiceDraft, leadingIcon = Icons.Outlined.PlayArrow) { ttsVoiceDraft = it.ifBlank { "alloy" } }
                     IconTextButton("保存语音配置", Icons.Outlined.Save, {
                         scope.launch {
                             store.saveSpeechSettings(
@@ -633,10 +718,12 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit, onCh
                                 ttsProvider = ttsProviderDraft.trim().ifBlank { "system" },
                                 ttsBaseUrl = ttsApiBaseUrlDraft.trim(),
                                 ttsApiKey = ttsApiKeyDraft.trim(),
+                                ttsModel = ttsModelDraft.trim().ifBlank { "tts-1" },
                                 ttsVoice = ttsVoiceDraft.trim(),
                                 sttProvider = sttProviderDraft.trim().ifBlank { "system" },
                                 sttBaseUrl = sttApiBaseUrlDraft.trim(),
                                 sttApiKey = sttApiKeyDraft.trim(),
+                                sttModel = sttModelDraft.trim().ifBlank { "whisper-1" },
                                 sttLanguage = sttLanguageDraft.trim().ifBlank { "zh-CN" }
                             )
                             speechExpanded = false

@@ -26,6 +26,9 @@ interface OceanDao {
     @Query("UPDATE conversation_history SET content = :content, updatedAt = :updatedAt WHERE id = :id")
     suspend fun updateConversationContent(id: Long, content: String, updatedAt: Long = System.currentTimeMillis())
 
+    @Query("DELETE FROM conversation_history WHERE id IN (:ids)")
+    suspend fun deleteConversationsByIds(ids: List<Long>)
+
     @Query("SELECT * FROM user_profile WHERE id = 1")
     fun userProfile(): Flow<UserProfile?>
 

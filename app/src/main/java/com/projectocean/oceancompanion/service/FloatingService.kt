@@ -14,6 +14,10 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -33,8 +37,8 @@ import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.graphics.Typeface
+import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
-import android.widget.Button as AndroidButton
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -48,6 +52,8 @@ import com.projectocean.oceancompanion.R
 import com.projectocean.oceancompanion.ai.FallbackAIClient
 import com.projectocean.oceancompanion.ai.PromptEngine
 import com.projectocean.oceancompanion.ai.SearchClient
+import com.projectocean.oceancompanion.ai.SpeechClient
+import com.projectocean.oceancompanion.ai.normalizeSpeechProvider
 import com.projectocean.oceancompanion.agent.SharedScreenContext
 import com.projectocean.oceancompanion.memory.ConversationHistory
 import com.projectocean.oceancompanion.memory.LongTermMemory
@@ -63,6 +69,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Locale
 
 class FloatingService : Service() {
@@ -70,6 +77,8 @@ class FloatingService : Service() {
     private lateinit var windowManager: WindowManager
     private lateinit var preferences: PreferencesStore
     private lateinit var database: OceanDatabase
+    private lateinit var speechClient: SpeechClient
+    private lateinit var wavVoiceRecorder: WavVoiceRecorder
     private val promptEngine = PromptEngine()
     private var bubble: View? = null
     private var companionPanel: View? = null
@@ -95,22 +104,33 @@ class FloatingService : Service() {
     private var currentProactiveMuteMinutes = 30
     private var currentCompanionOpenGesture = "double_tap"
     private var currentTtsEnabled = false
+    private var currentTtsProvider = "system"
+    private var currentSttProvider = "system"
     private var currentTtsVoice = ""
     private var currentSttLanguage = "zh-CN"
     private var textToSpeech: TextToSpeech? = null
+    private var mediaPlayer: MediaPlayer? = null
     private var ttsReady = false
     private var speechRecognizer: SpeechRecognizer? = null
     private var voiceListening = false
+    private var systemSpeechStarting = false
+    private var systemSpeechReady = false
+    private var voicePulseJob: Job? = null
+    private var cloudVoiceStartJob: Job? = null
+    private var cloudVoiceFile: File? = null
     private var currentCompanionTheme = CompanionTheme.default()
     private var currentSessionId = "session-${System.currentTimeMillis()}"
     private var currentSessionTopic = "Ocean Companion"
     private val conversationLines = mutableListOf<String>()
+    private var manualReplyJob: Job? = null
     private var panelVisibleState = mutableStateOf(false)
 
     override fun onCreate() {
         super.onCreate()
         preferences = PreferencesStore(this)
         database = OceanDatabase.create(this)
+        speechClient = SpeechClient(preferences)
+        wavVoiceRecorder = WavVoiceRecorder(this)
         startForeground(NotificationService.FLOATING_NOTIFICATION_ID, NotificationService.floatingNotification(this))
         scope.launch { preferences.userName.collect { currentUserName = it.ifBlank { "\u4f60" } } }
         scope.launch { preferences.companionName.collect { currentCompanionName = it.ifBlank { "Ocean" } } }
@@ -119,6 +139,8 @@ class FloatingService : Service() {
         scope.launch { preferences.proactiveMuteMinutes.collect { currentProactiveMuteMinutes = it.coerceIn(5, 240) } }
         scope.launch { preferences.companionOpenGesture.collect { currentCompanionOpenGesture = it.ifBlank { "double_tap" } } }
         scope.launch { preferences.ttsEnabled.collect { currentTtsEnabled = it; ensureTts() } }
+        scope.launch { preferences.ttsProvider.collect { currentTtsProvider = it.normalizeSpeechProvider(); ensureTts() } }
+        scope.launch { preferences.sttProvider.collect { currentSttProvider = it.normalizeSpeechProvider() } }
         scope.launch { preferences.ttsVoice.collect { currentTtsVoice = it; applyTtsVoice() } }
         scope.launch { preferences.sttLanguage.collect { currentSttLanguage = it.ifBlank { "zh-CN" } } }
         if (Settings.canDrawOverlays(this)) showBubble()
@@ -143,9 +165,14 @@ class FloatingService : Service() {
     }
     override fun onDestroy() {
         schedulerJob?.cancel()
-        speechRecognizer?.destroy()
+        stopVoiceFeedback(success = true, vibrate = false)
+        cloudVoiceStartJob?.cancel()
+        manualReplyJob?.cancel()
+        wavVoiceRecorder.stop()
+        destroySystemSpeechRecognizer()
         textToSpeech?.stop()
         textToSpeech?.shutdown()
+        stopCloudTts()
         if (::windowManager.isInitialized) {
             bubble?.let { runCatching { windowManager.removeView(it) } }
             companionPanel?.let { runCatching { windowManager.removeView(it) } }
@@ -329,38 +356,73 @@ class FloatingService : Service() {
     private fun startVoiceConversation() {
         if (voiceListening) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            pulseVoiceFailure()
             showProactiveBannerIfFresh("${companionName()}：还没有麦克风权限。请到系统权限里允许录音后，再长按悬浮球语音对话。")
             return
         }
+        if (currentSttProvider != "system") {
+            startCloudVoiceConversation()
+            return
+        }
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            pulseVoiceFailure()
             showProactiveBannerIfFresh("${companionName()}：当前系统没有可用的语音识别服务。")
             return
         }
+        destroySystemSpeechRecognizer()
         voiceListening = true
-        showProactiveBanner("${companionName()}：正在听，松手发送。")
-        val recognizer = speechRecognizer ?: SpeechRecognizer.createSpeechRecognizer(this).also { speechRecognizer = it }
+        systemSpeechStarting = true
+        systemSpeechReady = false
+        startVoiceFeedback()
+        showProactiveBanner("${companionName()}：正在启动系统语音识别。")
+        val recognizer = SpeechRecognizer.createSpeechRecognizer(this).also { speechRecognizer = it }
         recognizer.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: android.os.Bundle?) = Unit
+            override fun onReadyForSpeech(params: android.os.Bundle?) {
+                systemSpeechStarting = false
+                systemSpeechReady = true
+                showProactiveBanner("${companionName()}：正在听，松手发送。")
+            }
             override fun onBeginningOfSpeech() = Unit
             override fun onRmsChanged(rmsdB: Float) = Unit
             override fun onBufferReceived(buffer: ByteArray?) = Unit
-            override fun onEndOfSpeech() { voiceListening = false }
+            override fun onEndOfSpeech() {
+                voiceListening = false
+                systemSpeechStarting = false
+                systemSpeechReady = false
+            }
             override fun onPartialResults(partialResults: android.os.Bundle?) = Unit
             override fun onEvent(eventType: Int, params: android.os.Bundle?) = Unit
             override fun onError(error: Int) {
+                val failedBeforeReady = systemSpeechStarting && !systemSpeechReady
                 voiceListening = false
+                systemSpeechStarting = false
+                systemSpeechReady = false
+                stopVoiceFeedback(success = false)
                 val reason = when (error) {
                     SpeechRecognizer.ERROR_NO_MATCH -> "没有听清。"
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "没有检测到说话。"
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "麦克风权限不足。"
+                    SpeechRecognizer.ERROR_CLIENT -> if (failedBeforeReady) {
+                        "系统语音识别服务启动即失败。请在设置里切换云端 STT，或检查系统语音输入服务。"
+                    } else {
+                        "系统语音识别被系统中断。"
+                    }
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "系统语音识别正忙，请稍后再试。"
+                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "系统语音识别网络不可用。"
                     else -> "语音识别失败：$error"
                 }
+                destroySystemSpeechRecognizer()
                 showProactiveBannerIfFresh("${companionName()}：$reason")
             }
             override fun onResults(results: android.os.Bundle?) {
                 voiceListening = false
+                systemSpeechStarting = false
+                systemSpeechReady = false
+                stopVoiceFeedback(success = true)
+                destroySystemSpeechRecognizer()
                 val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty().trim()
                 if (text.isBlank()) {
+                    pulseVoiceFailure()
                     showProactiveBannerIfFresh("${companionName()}：没有识别到有效语音。")
                     return
                 }
@@ -375,13 +437,179 @@ class FloatingService : Service() {
         }
         runCatching { recognizer.startListening(intent) }.onFailure {
             voiceListening = false
+            systemSpeechStarting = false
+            systemSpeechReady = false
+            stopVoiceFeedback(success = false)
+            destroySystemSpeechRecognizer()
             showProactiveBannerIfFresh("${companionName()}：语音识别启动失败，请检查系统语音服务。")
         }
     }
 
     private fun stopVoiceConversation() {
         if (!voiceListening) return
+        if (currentSttProvider != "system") {
+            stopCloudVoiceConversation()
+            return
+        }
+        if (systemSpeechStarting && !systemSpeechReady) {
+            showProactiveBanner("${companionName()}：系统语音还在启动，已取消本次识别。")
+            voiceListening = false
+            systemSpeechStarting = false
+            systemSpeechReady = false
+            stopVoiceFeedback(success = false)
+            destroySystemSpeechRecognizer()
+            return
+        }
+        stopVoiceFeedback(success = true)
         runCatching { speechRecognizer?.stopListening() }
+    }
+
+    private fun destroySystemSpeechRecognizer() {
+        runCatching { speechRecognizer?.cancel() }
+        runCatching { speechRecognizer?.destroy() }
+        speechRecognizer = null
+    }
+
+    private fun startCloudVoiceConversation() {
+        voiceListening = true
+        cloudVoiceStartJob?.cancel()
+        cloudVoiceStartJob = scope.launch {
+            val missing = withContext(Dispatchers.IO) {
+                val keyBlank = preferences.sttApiKey.first().isBlank()
+                val modelBlank = preferences.sttModel.first().isBlank()
+                val baseBlank = preferences.sttApiBaseUrl.first().isBlank()
+                when {
+                    keyBlank -> "请先在语音设置里保存 STT API Key。"
+                    modelBlank -> "请先在语音设置里填写 STT 模型。"
+                    baseBlank -> "请先在语音设置里填写 STT Base URL。"
+                    else -> ""
+                }
+            }
+            if (!voiceListening) return@launch
+            if (missing.isNotBlank()) {
+                voiceListening = false
+                pulseVoiceFailure()
+                showProactiveBannerIfFresh("${companionName()}：$missing")
+                return@launch
+            }
+            val started = wavVoiceRecorder.start()
+            if (!voiceListening) {
+                wavVoiceRecorder.stop()
+                runCatching { started.getOrNull()?.delete() }
+                return@launch
+            }
+            started.onSuccess { file ->
+                cloudVoiceFile = file
+                startVoiceFeedback()
+                showProactiveBanner("${companionName()}：正在录音，松手后交给云端识别。")
+            }.onFailure { error ->
+                cloudVoiceFile = null
+                voiceListening = false
+                stopVoiceFeedback(success = false)
+                showProactiveBannerIfFresh("${companionName()}：云端语音录制失败：${error.message.orEmpty().take(60)}")
+            }
+        }
+    }
+
+    private fun stopCloudVoiceConversation() {
+        voiceListening = false
+        cloudVoiceStartJob?.cancel()
+        cloudVoiceStartJob = null
+        stopVoiceFeedback(success = true)
+        val file = wavVoiceRecorder.stop() ?: cloudVoiceFile
+        cloudVoiceFile = null
+        if (file == null || !file.exists() || file.length() <= 48L) {
+            pulseVoiceFailure()
+            showProactiveBannerIfFresh("${companionName()}：没有录到有效语音。")
+            return
+        }
+        showProactiveBanner("${companionName()}：正在识别语音。")
+        scope.launch {
+            val result = speechClient.transcribe(file)
+            runCatching { file.delete() }
+            result.onSuccess { text ->
+                val cleaned = text.trim()
+                if (cleaned.isBlank()) {
+                    pulseVoiceFailure()
+                    showProactiveBannerIfFresh("${companionName()}：没有识别到有效语音。")
+                } else {
+                    handleVoiceUserText(cleaned)
+                }
+            }.onFailure { error ->
+                pulseVoiceFailure()
+                showProactiveBannerIfFresh("${companionName()}：云端语音识别失败：${error.message.orEmpty().take(72)}")
+            }
+        }
+    }
+
+    private fun startVoiceFeedback() {
+        vibrate(35)
+        bubble?.animate()?.cancel()
+        voicePulseJob?.cancel()
+        voicePulseJob = scope.launch {
+            while (voiceListening) {
+                bubble?.animate()
+                    ?.scaleX(1.12f)
+                    ?.scaleY(1.12f)
+                    ?.alpha(0.86f)
+                    ?.setDuration(240)
+                    ?.setInterpolator(DecelerateInterpolator(1.2f))
+                    ?.start()
+                delay(260)
+                bubble?.animate()
+                    ?.scaleX(0.96f)
+                    ?.scaleY(0.96f)
+                    ?.alpha(1f)
+                    ?.setDuration(240)
+                    ?.setInterpolator(DecelerateInterpolator(1.2f))
+                    ?.start()
+                delay(260)
+            }
+        }
+    }
+
+    private fun stopVoiceFeedback(success: Boolean, vibrate: Boolean = true) {
+        voicePulseJob?.cancel()
+        voicePulseJob = null
+        if (vibrate) vibrate(if (success) 24 else 90)
+        bubble?.animate()
+            ?.scaleX(1f)
+            ?.scaleY(1f)
+            ?.alpha(1f)
+            ?.setDuration(180)
+            ?.setInterpolator(DecelerateInterpolator(1.4f))
+            ?.start()
+    }
+
+    private fun pulseVoiceFailure() {
+        vibrate(90)
+        bubble?.animate()
+            ?.scaleX(1.04f)
+            ?.scaleY(1.04f)
+            ?.setDuration(90)
+            ?.withEndAction {
+                bubble?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(120)?.start()
+            }
+            ?.start()
+    }
+
+    private fun vibrate(durationMs: Long) {
+        if (durationMs <= 0) return
+        runCatching {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(VIBRATOR_SERVICE) as Vibrator
+            }
+            if (!vibrator.hasVibrator()) return@runCatching
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(durationMs)
+            }
+        }
     }
 
     private fun handleVoiceUserText(text: String) {
@@ -398,8 +626,10 @@ class FloatingService : Service() {
     private fun ensureTts() {
         if (!currentTtsEnabled) {
             textToSpeech?.stop()
+            stopCloudTts()
             return
         }
+        if (currentTtsProvider != "system") return
         if (textToSpeech != null) return
         textToSpeech = TextToSpeech(this) { status ->
             ttsReady = status == TextToSpeech.SUCCESS
@@ -421,13 +651,47 @@ class FloatingService : Service() {
 
     private fun speakBannerIfEnabled(message: String) {
         if (!currentTtsEnabled) return
+        val text = message.substringAfter('：', message).trim().ifBlank { message }
+        if (currentTtsProvider != "system") {
+            speakCloudTts(text)
+            return
+        }
         ensureTts()
         if (!ttsReady) return
-        val text = message.substringAfter('：', message).trim().ifBlank { message }
         textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "ocean-banner-${System.currentTimeMillis()}")
     }
 
+    private fun speakCloudTts(text: String) {
+        scope.launch {
+            speechClient.synthesize(text).onSuccess { audio ->
+                runCatching {
+                    val file = File(cacheDir, "ocean_tts.${audio.extension}")
+                    file.writeBytes(audio.bytes)
+                    stopCloudTts(showToast = false)
+                    mediaPlayer = MediaPlayer().apply {
+                        setDataSource(file.absolutePath)
+                        setOnCompletionListener { stopCloudTts(showToast = false) }
+                        setOnErrorListener { _, _, _ ->
+                            stopCloudTts(showToast = false)
+                            true
+                        }
+                        prepare()
+                        start()
+                    }
+                }
+            }.onFailure { error ->
+                Toast.makeText(this@FloatingService, "${companionName()}：云端朗读失败：${error.message.orEmpty().take(48)}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     private fun stopTtsIfSpeaking(): Boolean {
+        mediaPlayer?.let { player ->
+            if (player.isPlaying) {
+                stopCloudTts()
+                return true
+            }
+        }
         val tts = textToSpeech ?: return false
         if (!tts.isSpeaking) return false
         tts.stop()
@@ -435,11 +699,20 @@ class FloatingService : Service() {
         return true
     }
 
+    private fun stopCloudTts(showToast: Boolean = true) {
+        val player = mediaPlayer ?: return
+        runCatching { if (player.isPlaying) player.stop() }
+        runCatching { player.release() }
+        mediaPlayer = null
+        if (showToast) Toast.makeText(this, "${companionName()}：已停止朗读。", Toast.LENGTH_SHORT).show()
+    }
+
     private fun toggleCompanionPanel() {
         if (panelAnimating) return
         companionPanel?.let { panel ->
             panelAnimating = true
             panelVisibleState.value = false
+            hideKeyboardFromPanel(panel)
             panel.animate().alpha(0f).translationY(if (isPortrait()) 90f else 0f).translationX(if (isPortrait()) 0f else 90f).setDuration(220).withEndAction {
                 runCatching { windowManager.removeView(panel) }
                 companionPanel = null
@@ -514,7 +787,7 @@ class FloatingService : Service() {
     private fun buildNativeCompanionPanel(portrait: Boolean, theme: CompanionTheme): View {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(30, 26, 30, 26)
+            setPadding(30, 24, 30, 26)
             background = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(theme.surfaceStart, theme.surfaceMid, theme.surfaceEnd)
@@ -522,35 +795,20 @@ class FloatingService : Service() {
                 cornerRadius = if (portrait) 34f else 30f
                 setStroke(2, theme.stroke)
             }
+            clipToOutline = true
             elevation = 26f
         }
 
-        val titleRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
         val title = TextView(this).apply {
             text = "${companionName()} \u957f\u65f6\u4f34\u968f"
             textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
             setTextColor(theme.textPrimary)
+            setPadding(2, 0, 2, 6)
         }
-        val close = AndroidButton(this).apply {
-            text = "\u2304"
-            contentDescription = "\u6536\u8d77\u957f\u5bf9\u8bdd"
-            textSize = 22f
-            setTextColor(theme.textPrimary)
-            background = GradientDrawable().apply {
-                setColor(Color.TRANSPARENT)
-                cornerRadius = 18f
-                setStroke(1, theme.stroke)
-            }
-            setOnClickListener { toggleCompanionPanel() }
-        }
-        titleRow.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        titleRow.addView(close, LinearLayout.LayoutParams(72, 64))
 
         val hint = TextView(this).apply {
-            text = "\u5df2\u8fde\u63a5\u5c4f\u5e55/\u6587\u4ef6\u4e0a\u4e0b\u6587\u548c\u957f\u65f6\u8bb0\u5fc6\uff1b\u7ad6\u5c4f\u4e3a\u4e0b\u534a\u5c4f\uff0c\u6a2a\u5c4f\u4e3a\u53f3\u534a\u5c4f\u3002"
+            text = "已连接屏幕/文件上下文和长时记忆；竖屏为下半屏，横屏为右半屏。"
             textSize = 13f
             setTextColor(theme.textSecondary)
             setPadding(0, 4, 0, 12)
@@ -559,11 +817,13 @@ class FloatingService : Service() {
         val messages = LinearLayout(this).apply {
             tag = MESSAGE_LIST_TAG
             orientation = LinearLayout.VERTICAL
-            setPadding(10, 10, 10, 10)
+            setPadding(12, 16, 12, 16)
         }
         val scroll = ScrollView(this).apply {
             tag = SCROLL_VIEW_TAG
             isFillViewport = true
+            clipToOutline = true
+            clipToPadding = false
             background = GradientDrawable().apply {
                 setColor(theme.glassPanel)
                 cornerRadius = 24f
@@ -579,7 +839,7 @@ class FloatingService : Service() {
             setPadding(0, 12, 0, 0)
         }
         val input = EditText(this).apply {
-            setHint("\u7ee7\u7eed\u5bf9\u8bdd")
+            setHint("继续对话")
             setSingleLine(true)
             setTextColor(theme.textPrimary)
             setHintTextColor(theme.textSecondary)
@@ -593,15 +853,17 @@ class FloatingService : Service() {
                 updateCompanionPanelFocusable(hasFocus)
                 if (hasFocus) {
                     view.post {
-                        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
+                        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+                            .showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
                     }
                 }
             }
         }
-        val send = AndroidButton(this).apply {
-            setText("\u27a4")
+        val send = TextView(this).apply {
+            setText("➤")
             contentDescription = "\u53d1\u9001\u6d88\u606f"
             textSize = 20f
+            gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
             background = GradientDrawable(
                 GradientDrawable.Orientation.LEFT_RIGHT,
@@ -624,7 +886,7 @@ class FloatingService : Service() {
         inputRow.addView(input, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         inputRow.addView(send, LinearLayout.LayoutParams(72, 64).apply { leftMargin = 10 })
 
-        container.addView(titleRow)
+        container.addView(title)
         container.addView(hint)
         container.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         container.addView(inputRow)
@@ -642,6 +904,24 @@ class FloatingService : Service() {
         if (nextFlags == params.flags) return
         params.flags = nextFlags
         runCatching { windowManager.updateViewLayout(panel, params) }
+    }
+
+    private fun focusInputAndShowKeyboard(view: View) {
+        updateCompanionPanelFocusable(true)
+        view.isFocusableInTouchMode = true
+        view.requestFocus()
+        view.postDelayed({
+            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+                .showSoftInput(view, InputMethodManager.SHOW_FORCED)
+        }, 80)
+    }
+
+    private fun hideKeyboardFromPanel(view: View) {
+        runCatching {
+            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+                .hideSoftInputFromWindow(view.windowToken, 0)
+        }
+        updateCompanionPanelFocusable(false)
     }
 
     private fun isPortrait(): Boolean = resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE
@@ -1009,7 +1289,7 @@ class FloatingService : Service() {
     }
 
     private suspend fun generateManualReply(userText: String): String {
-        val context = SharedScreenContext.visibleText
+        val context = SharedScreenContext.visibleText.take(MAX_SCREEN_PROMPT_CHARS)
         val customPersona = preferences.customPersonaPrompt.first()
         val memoryText = recentMemoryText()
         val name = companionName()
@@ -1023,7 +1303,7 @@ class FloatingService : Service() {
                 userText = userText,
                 screenText = context.ifBlank { "屏幕文字为空或暂不可读。" },
                 customPersona = "AI name: $name\nUser name: $user\n$customPersona",
-                memory = memoryText,
+                memory = memoryText.take(MAX_MEMORY_PROMPT_CHARS),
                 conversation = conversationText(),
                 maxChars = preferences.companionReplyMaxChars.first(),
                 searchContext = searchContext
@@ -1258,7 +1538,10 @@ class FloatingService : Service() {
 
     private fun conversationText(): String {
         if (conversationLines.isEmpty()) return "No previous long conversation."
-        return conversationLines.joinToString("\n\n")
+        return conversationLines
+            .filterNot { it.endsWith("\uff1a\u6b63\u5728\u601d\u8003...") }
+            .takeLast(MAX_PROMPT_MESSAGES)
+            .joinToString("\n\n")
     }
 
     private fun proactiveHistoryText(): String {
@@ -1353,6 +1636,10 @@ class FloatingService : Service() {
         const val PROACTIVE_BANNER_DURATION_MS = 8_000L
         const val SCREEN_CONTEXT_FRESH_MS = 12_000L
         const val USAGE_STATS_LOOKBACK_MS = 30_000L
+        const val MAX_VISIBLE_MESSAGES = 24
+        const val MAX_PROMPT_MESSAGES = 10
+        const val MAX_SCREEN_PROMPT_CHARS = 3_500
+        const val MAX_MEMORY_PROMPT_CHARS = 1_200
         const val ACTION_FILE_CONTEXT_READY = "com.projectocean.oceancompanion.action.FILE_CONTEXT_READY"
         const val ACTION_SCREEN_ANALYSIS_READY = "com.projectocean.oceancompanion.action.SCREEN_ANALYSIS_READY"
         const val EXTRA_FILE_TITLE = "file_title"

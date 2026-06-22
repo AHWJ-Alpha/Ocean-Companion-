@@ -8,12 +8,18 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.projectocean.oceancompanion.ai.ApiProfile
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 private val Context.dataStore by preferencesDataStore("ocean_preferences")
 
 class PreferencesStore(private val context: Context) {
+    private val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     val provider = context.dataStore.data.map { it[Keys.Provider] ?: "openai" }
     val apiBaseUrl = context.dataStore.data.map { it[Keys.ApiBaseUrl] ?: "https://api.openai.com/v1" }
     val apiKey = context.dataStore.data.map { it[Keys.ApiKey] ?: "" }
@@ -48,10 +54,12 @@ class PreferencesStore(private val context: Context) {
     val ttsProvider = context.dataStore.data.map { it[Keys.TtsProvider] ?: "system" }
     val ttsApiBaseUrl = context.dataStore.data.map { it[Keys.TtsApiBaseUrl] ?: "" }
     val ttsApiKey = context.dataStore.data.map { it[Keys.TtsApiKey] ?: "" }
+    val ttsModel = context.dataStore.data.map { it[Keys.TtsModel] ?: "tts-1" }
     val ttsVoice = context.dataStore.data.map { it[Keys.TtsVoice] ?: "" }
     val sttProvider = context.dataStore.data.map { it[Keys.SttProvider] ?: "system" }
     val sttApiBaseUrl = context.dataStore.data.map { it[Keys.SttApiBaseUrl] ?: "" }
     val sttApiKey = context.dataStore.data.map { it[Keys.SttApiKey] ?: "" }
+    val sttModel = context.dataStore.data.map { it[Keys.SttModel] ?: "whisper-1" }
     val sttLanguage = context.dataStore.data.map { it[Keys.SttLanguage] ?: "zh-CN" }
     val apiProfilesJson = context.dataStore.data.map { it[Keys.ApiProfilesJson] ?: "" }
     val apiProfiles = context.dataStore.data.map { prefs ->
@@ -97,6 +105,9 @@ class PreferencesStore(private val context: Context) {
     suspend fun setThemeMode(value: String) = context.dataStore.edit { it[Keys.ThemeMode] = value }
     suspend fun setAnimePrimaryColor(value: String) = context.dataStore.edit { it[Keys.AnimePrimaryColor] = value }
     suspend fun setAnimeSecondaryColor(value: String) = context.dataStore.edit { it[Keys.AnimeSecondaryColor] = value }
+    fun setThemeModeAsync(value: String) = writeScope.launch { setThemeMode(value) }
+    fun setAnimePrimaryColorAsync(value: String) = writeScope.launch { setAnimePrimaryColor(value) }
+    fun setAnimeSecondaryColorAsync(value: String) = writeScope.launch { setAnimeSecondaryColor(value) }
     suspend fun setSearchEnabled(value: Boolean) = context.dataStore.edit { it[Keys.SearchEnabled] = value }
     suspend fun setTtsEnabled(value: Boolean) = context.dataStore.edit { it[Keys.TtsEnabled] = value }
 
@@ -113,20 +124,24 @@ class PreferencesStore(private val context: Context) {
         ttsProvider: String,
         ttsBaseUrl: String,
         ttsApiKey: String,
+        ttsModel: String,
         ttsVoice: String,
         sttProvider: String,
         sttBaseUrl: String,
         sttApiKey: String,
+        sttModel: String,
         sttLanguage: String
     ) = context.dataStore.edit {
         it[Keys.TtsEnabled] = ttsEnabled
         it[Keys.TtsProvider] = ttsProvider
         it[Keys.TtsApiBaseUrl] = ttsBaseUrl
         it[Keys.TtsApiKey] = ttsApiKey
+        it[Keys.TtsModel] = ttsModel
         it[Keys.TtsVoice] = ttsVoice
         it[Keys.SttProvider] = sttProvider
         it[Keys.SttApiBaseUrl] = sttBaseUrl
         it[Keys.SttApiKey] = sttApiKey
+        it[Keys.SttModel] = sttModel
         it[Keys.SttLanguage] = sttLanguage
     }
 
@@ -267,10 +282,12 @@ class PreferencesStore(private val context: Context) {
         val TtsProvider = stringPreferencesKey("tts_provider")
         val TtsApiBaseUrl = stringPreferencesKey("tts_api_base_url")
         val TtsApiKey = stringPreferencesKey("tts_api_key")
+        val TtsModel = stringPreferencesKey("tts_model")
         val TtsVoice = stringPreferencesKey("tts_voice")
         val SttProvider = stringPreferencesKey("stt_provider")
         val SttApiBaseUrl = stringPreferencesKey("stt_api_base_url")
         val SttApiKey = stringPreferencesKey("stt_api_key")
+        val SttModel = stringPreferencesKey("stt_model")
         val SttLanguage = stringPreferencesKey("stt_language")
     }
 }
