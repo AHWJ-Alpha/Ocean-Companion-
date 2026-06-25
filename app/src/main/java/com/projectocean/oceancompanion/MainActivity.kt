@@ -136,11 +136,10 @@ class MainActivity : ComponentActivity() {
                     .setTitle("New! Ocean Companion $version")
                     .setMessage(
                         "本次更新重点：\n" +
-                            "- 设置页进入时会读取上次保存的数据，不再先刷新为空。\n" +
-                            "- 修复更新检测文案乱码，并增加 GitHub Release 兜底检测。\n" +
-                            "- 长对话保留 5.1 稳定逻辑，继续使用人格、记忆和上下文。\n" +
-                            "- 历史记录支持按主题或按天长按删除。\n" +
-                            "- 保留搜索、语音和多 API fallback 能力。"
+                            "- 三击悬浮球时会同时关闭主动弹幕，不再留下残留提示。\n" +
+                            "- 屏幕熄灭后重新亮起，悬浮球会自动恢复显示。\n" +
+                            "- 设置页仍会读取上次保存的数据，方便继续编辑。\n" +
+                            "- 保持更新检测和多 API fallback 逻辑。"
                     )
                     .setPositiveButton("知道了", null)
                     .show()

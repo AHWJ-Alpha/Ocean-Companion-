@@ -3,8 +3,10 @@
 import android.app.Service
 import android.app.usage.UsageStatsManager
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
@@ -124,6 +126,16 @@ class FloatingService : Service() {
     private val conversationLines = mutableListOf<String>()
     private var manualReplyJob: Job? = null
     private var panelVisibleState = mutableStateOf(false)
+    private var bubbleManuallyHidden = false
+
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_ON,
+                Intent.ACTION_USER_PRESENT -> ensureBubbleVisible()
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -143,6 +155,15 @@ class FloatingService : Service() {
         scope.launch { preferences.sttProvider.collect { currentSttProvider = it.normalizeSpeechProvider() } }
         scope.launch { preferences.ttsVoice.collect { currentTtsVoice = it; applyTtsVoice() } }
         scope.launch { preferences.sttLanguage.collect { currentSttLanguage = it.ifBlank { "zh-CN" } } }
+        runCatching {
+            registerReceiver(
+                screenStateReceiver,
+                IntentFilter().apply {
+                    addAction(Intent.ACTION_SCREEN_ON)
+                    addAction(Intent.ACTION_USER_PRESENT)
+                }
+            )
+        }
         if (Settings.canDrawOverlays(this)) showBubble()
         startAutoSpeechScheduler()
     }
@@ -178,11 +199,22 @@ class FloatingService : Service() {
             companionPanel?.let { runCatching { windowManager.removeView(it) } }
             proactiveBanner?.let { runCatching { windowManager.removeView(it) } }
         }
+        runCatching { unregisterReceiver(screenStateReceiver) }
         scope.cancel()
         super.onDestroy()
     }
 
+    private fun ensureBubbleVisible() {
+        if (bubbleManuallyHidden) return
+        if (!Settings.canDrawOverlays(this)) return
+        if (bubble != null) return
+        if (!::windowManager.isInitialized) return
+        showBubble()
+    }
+
     private fun showBubble() {
+        bubbleManuallyHidden = false
+        if (bubble != null) return
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         val params = WindowManager.LayoutParams(
             148,
@@ -293,6 +325,7 @@ class FloatingService : Service() {
                     singleTapJob?.cancel()
                     if (tapCount >= 3) {
                         tapCount = 0
+                        clearProactiveBanner(import = false)
                         hideBubbleWithAnimation(view)
                         return@setOnTouchListener true
                     }
@@ -339,6 +372,7 @@ class FloatingService : Service() {
     }
 
     private fun hideBubbleWithAnimation(view: View) {
+        bubbleManuallyHidden = true
         Toast.makeText(this, "${companionName()}：悬浮球已隐藏，回到应用可重新启动。", Toast.LENGTH_SHORT).show()
         view.animate()
             .alpha(0f)
