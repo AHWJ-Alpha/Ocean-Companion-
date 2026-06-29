@@ -762,22 +762,22 @@ private fun SettingsScreen(modifier: Modifier, onPickIconImage: () -> Unit, onCh
                     }
                     MutedText("\u8fdb\u5165\u547d\u4e2d\u5e94\u7528\u4f1a\u7acb\u5373\u89e6\u53d1\uff0c\u4e0d\u53d7\u4e0b\u65b9\u65e5\u5e38\u95f4\u9694\u9650\u5236\u3002", small = true)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("\u9650\u5236\u5f39\u5e55\u5b57\u6570", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                        Text("自适应弹幕宽度", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                         Switch(
                             checked = proactiveBannerMaxCharsDraft > 0,
                             onCheckedChange = { checked -> proactiveBannerMaxCharsDraft = if (checked) 60 else 0 }
                         )
                     }
                     if (proactiveBannerMaxCharsDraft > 0) {
-                        Text("\u5f39\u5e55\u6700\u5927\u957f\u5ea6\uff1a${proactiveBannerMaxCharsDraft.coerceIn(20, 200)} \u5b57")
+                        Text("弹幕最大展示范围：${proactiveBannerMaxCharsDraft.coerceIn(20, 200)}")
                         Slider(
                             value = proactiveBannerMaxCharsDraft.coerceIn(20, 200).toFloat(),
                             onValueChange = { proactiveBannerMaxCharsDraft = it.toInt().coerceIn(20, 200) },
                             valueRange = 20f..200f
                         )
-                        MutedText("\u9650\u5236\u65f6 Ocean \u4f1a\u8981\u6c42 AI \u76f4\u63a5\u751f\u6210\u7b26\u5408\u957f\u5ea6\u7684\u5b8c\u6574\u77ed\u53e5\uff0c\u907f\u514d\u786c\u622a\u65ad\u3002", small = true)
+                        MutedText("短句会自动收窄；超出最大展示范围时，弹幕会在该宽度内多行显示，不再硬截断。", small = true)
                     } else {
-                        MutedText("\u5f53\u524d\u4e3a\u4e0d\u9650\u5236\uff1a\u4e3b\u52a8\u5f39\u5e55\u4f1a\u5b8c\u6574\u663e\u793a AI \u8f93\u51fa\uff0c\u4e0d\u4f1a\u622a\u65ad\u3002", small = true)
+                        MutedText("当前为不限制：主动弹幕会按内容尽量展开，仍会避免遮挡过多屏幕。", small = true)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("限制长对话回复字数", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)

@@ -1148,13 +1148,14 @@ class FloatingService : Service() {
         pendingProactiveLine = message
         val maxChars = currentProactiveBannerMaxChars
         val unlimited = maxChars <= 0
+        val width = proactiveBannerWidth(message, maxChars, unlimited)
 
         val text = TextView(this).apply {
             this.text = message
             textSize = 15f
             setTextColor(Color.WHITE)
             setPadding(28, 18, 28, 18)
-            if (!unlimited) maxLines = 3
+            maxLines = if (unlimited) 8 else 6
             background = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(
@@ -1197,8 +1198,6 @@ class FloatingService : Service() {
             }
         }
 
-        val widthRatio = if (unlimited) 0.82f else 0.72f
-        val width = (resources.displayMetrics.widthPixels * widthRatio).toInt().coerceAtLeast(360)
         val params = WindowManager.LayoutParams(
             width,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -1293,6 +1292,30 @@ class FloatingService : Service() {
             .start()
     }
 
+    private fun proactiveBannerWidth(message: String, maxChars: Int, unlimited: Boolean): Int {
+        val metrics = resources.displayMetrics
+        val screenWidth = metrics.widthPixels.coerceAtLeast(1)
+        val density = metrics.density.coerceAtLeast(1f)
+        val minWidth = (220 * density).toInt().coerceAtMost((screenWidth * 0.58f).toInt())
+        val maxRatio = if (unlimited) {
+            0.86f
+        } else {
+            val normalized = (maxChars.coerceIn(20, 200) - 20) / 180f
+            0.48f + normalized * 0.38f
+        }
+        val maxWidth = (screenWidth * maxRatio).toInt().coerceAtLeast(minWidth)
+        val compactLength = message.trim().replace(Regex("\\s+"), "").length.coerceAtLeast(1)
+        val contentRatio = when {
+            compactLength <= 10 -> 0.38f
+            compactLength <= 20 -> 0.48f
+            compactLength <= 36 -> 0.58f
+            compactLength <= 64 -> 0.70f
+            else -> maxRatio
+        }
+        val targetWidth = (screenWidth * contentRatio).toInt().coerceAtLeast(minWidth)
+        return targetWidth.coerceAtMost(maxWidth)
+    }
+
     private suspend fun generateCompanionLine(triggerApps: String, reason: String, packageName: String = SharedScreenContext.packageName): String {
         val screenText = SharedScreenContext.visibleText.ifBlank { "屏幕文字为空或暂不可读。" }
         val memoryText = recentMemoryText()
@@ -1317,7 +1340,7 @@ class FloatingService : Service() {
         return try {
             val request = promptEngine.buildProactiveCompanionPrompt(
                 screenText = screenText,
-                customPersona = "AI name: $name\nUser name: $user\nCurrent app: $appName\nContext source: $source\nTrigger reason: $reason\n$customPersona",
+                customPersona = "AI name: $name\nUser name: $user\nCurrent app: $appName\nContext source: $source\nTrigger reason: $reason\nBanner layout: 主动弹幕会根据话语长度自动调整宽度；如果内容超过用户设定的最大展示范围，界面会自动多行显示，所以回复要保持句子完整，不要用省略号硬收尾。\n$customPersona",
                 memory = memoryText,
                 operationHistory = proactiveHistoryText(),
                 triggerApps = triggerApps,
@@ -1332,14 +1355,11 @@ class FloatingService : Service() {
     }
 
     private fun fitProactiveLength(message: String, maxChars: Int, name: String, user: String, appName: String, screenText: String): String {
-        if (maxChars <= 0 || message.length <= maxChars) return message
-        val prefix = "$name\uff1a"
-        val hint = screenText.lineSequence().map { it.trim() }.firstOrNull { it.length >= 4 }?.take(12)
-        val candidates = listOf(
-            if (hint != null) "$prefix$user，看见「$hint」，先抓这个线索。" else "$prefix$user，画面文字不足，我先不乱判断。",
-            if (hint != null) "$prefix「$hint」像是当前重点。" else "${prefix}当前文字不足，先安静观察。"
-        )
-        return candidates.firstOrNull { it.length <= maxChars } ?: prefix.take(maxChars.coerceAtLeast(1))
+        return message.trim().ifBlank {
+            val prefix = "$name\uff1a"
+            val hint = screenText.lineSequence().map { it.trim() }.firstOrNull { it.length >= 4 }?.take(12)
+            if (hint != null) "$prefix$user，看见「$hint」，先抓这个线索。" else "$prefix$user，画面文字不足，我先不乱判断。"
+        }
     }
 
     private suspend fun generateManualReply(userText: String): String {
